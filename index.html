@@ -6,7 +6,7 @@
 <title>POS QA Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b}
@@ -26,7 +26,53 @@ td{padding:7px 11px;border-bottom:1px solid #f1f5f9;font-size:12px;vertical-alig
 (function(){
 var SUPA_URL="https://voptigbhiwtgiqnlcwgd.supabase.co";
 var SUPA_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZvcHRpZ2JoaXd0Z2lxbmxjd2dkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2MTAxOTIsImV4cCI6MjA5MDE4NjE5Mn0.IDBvXfinC-izijkcqw1RZ-JqQ7VBY2qrEcvlK1FnJhk";
-var sb=supabase.createClient(SUPA_URL,SUPA_KEY);
+// Auth state
+var _session=null;
+
+// Auth helpers using Supabase REST API directly
+var sb={
+  auth:{
+    getSession:async function(){
+      try{var s=localStorage.getItem("sb_session");if(s){_session=JSON.parse(s);return{data:{session:_session}};}return{data:{session:null}};}catch(x){return{data:{session:null}};}
+    },
+    signInWithPassword:async function(creds){
+      var r=await fetch(SUPA_URL+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":SUPA_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:creds.email,password:creds.password})});
+      var data=await r.json();
+      if(!r.ok)return{error:{message:data.error_description||data.msg||"Invalid email or password"}};
+      _session=data;
+      try{localStorage.setItem("sb_session",JSON.stringify(data));}catch(x){}
+      return{data:{user:data.user},error:null};
+    },
+    signOut:async function(){
+      try{if(_session)await fetch(SUPA_URL+"/auth/v1/logout",{method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+_session.access_token}});}catch(x){}
+      _session=null;
+      try{localStorage.removeItem("sb_session");}catch(x){}
+    },
+    onAuthStateChange:function(cb){return{data:{subscription:{unsubscribe:function(){}}}};}
+  },
+  from:function(table){
+    var token=_session?_session.access_token:SUPA_KEY;
+    var headers={"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=representation"};
+    return{
+      select:function(cols){
+        var url=SUPA_URL+"/rest/v1/"+table+"?select="+(cols||"*");
+        return{
+          order:function(col,opts){
+            url+="&order="+col+(opts&&opts.ascending===false?".desc":".asc");
+            return{then:function(cb){return fetch(url,{headers:headers}).then(function(r){return r.json();}).then(function(d){return cb({data:d,error:null});}).catch(function(e){return cb({data:null,error:e});});}};
+          },
+          then:function(cb){return fetch(url,{headers:headers}).then(function(r){return r.json();}).then(function(d){return cb({data:d,error:null});}).catch(function(e){return cb({data:null,error:e});});}
+        };
+      },
+      upsert:function(row){
+        return fetch(SUPA_URL+"/rest/v1/"+table,{method:"POST",headers:Object.assign({},headers,{"Prefer":"resolution=merge-duplicates,return=minimal"}),body:JSON.stringify(row)}).then(function(){return{error:null};}).catch(function(e){return{error:e};});
+      },
+      delete:function(){
+        return{eq:function(col,val){return fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+val,{method:"DELETE",headers:headers}).then(function(){return{error:null};});}}; 
+      }
+    };
+  }
+};
 
 var R=React,D=ReactDOM;
 var SC={POS:{bg:"#dbeafe",color:"#1e40af",border:"#93c5fd",bar:"#3b82f6"},KDS:{bg:"#dcfce7",color:"#166534",border:"#86efac",bar:"#22c55e"},Menu:{bg:"#fef3c7",color:"#92400e",border:"#fcd34d",bar:"#eab308"},Stripe:{bg:"#f3e8ff",color:"#6b21a8",border:"#c4b5fd",bar:"#a855f7"},Backend:{bg:"#fce7f3",color:"#9d174d",border:"#f9a8d4",bar:"#ec4899"},Custom:{bg:"#f0fdf4",color:"#166534",border:"#86efac",bar:"#22c55e"}};
