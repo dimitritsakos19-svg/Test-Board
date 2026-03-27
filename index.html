@@ -30,33 +30,62 @@ var SC={POS:{bg:"#dbeafe",color:"#1e40af",border:"#93c5fd",bar:"#3b82f6"},KDS:{b
 var ST={Untested:{bg:"#f3f4f6",color:"#6b7280",border:"#d1d5db"},Pass:{bg:"#dcfce7",color:"#166534",border:"#4ade80"},Fail:{bg:"#fee2e2",color:"#991b1b",border:"#f87171"},Blocked:{bg:"#fef3c7",color:"#92400e",border:"#fcd34d"}};
 var SV={Critical:{bg:"#fee2e2",color:"#991b1b",border:"#fca5a5"},High:{bg:"#fff7ed",color:"#9a3412",border:"#fed7aa"},Medium:{bg:"#fefce8",color:"#854d0e",border:"#fde68a"},Low:{bg:"#f0fdf4",color:"#166534",border:"#bbf7d0"}};
 var SN={POS:"POS Terminal",KDS:"Kitchen Display",Menu:"Menu Designer",Stripe:"Stripe Payments",Backend:"Backend",Custom:"Custom"};
-var PR={Pass:4,Fail:3,Blocked:2,Untested:1};
 var _session=null;
 var sb={
   auth:{
-    getSession:function(){try{var s=localStorage.getItem("sb_session");if(s){_session=JSON.parse(s);return Promise.resolve({data:{session:_session}});}return Promise.resolve({data:{session:null}});}catch(x){return Promise.resolve({data:{session:null}});}},
-    signInWithPassword:function(creds){return fetch(SUPA_URL+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":SUPA_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:creds.email,password:creds.password})}).then(function(r){return r.json().then(function(data){if(!r.ok)return{error:{message:data.error_description||data.msg||"Invalid email or password"}};_session=data;try{localStorage.setItem("sb_session",JSON.stringify(data));}catch(x){}return{data:{user:data.user},error:null};});});},
-    signOut:function(){var p=_session?fetch(SUPA_URL+"/auth/v1/logout",{method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+_session.access_token}}):Promise.resolve();_session=null;try{localStorage.removeItem("sb_session");}catch(x){}return p;}
+    getSession:function(){
+      try{var s=localStorage.getItem("sb_session");if(s){_session=JSON.parse(s);return Promise.resolve({data:{session:_session}});}return Promise.resolve({data:{session:null}});}
+      catch(x){return Promise.resolve({data:{session:null}});}
+    },
+    signInWithPassword:function(creds){
+      return fetch(SUPA_URL+"/auth/v1/token?grant_type=password",{method:"POST",headers:{"apikey":SUPA_KEY,"Content-Type":"application/json"},body:JSON.stringify({email:creds.email,password:creds.password})})
+      .then(function(r){return r.json().then(function(data){
+        if(!r.ok)return{error:{message:data.error_description||data.msg||"Invalid email or password"}};
+        _session=data;try{localStorage.setItem("sb_session",JSON.stringify(data));}catch(x){}
+        return{data:{user:data.user},error:null};
+      });});
+    },
+    signOut:function(){
+      var p=_session?fetch(SUPA_URL+"/auth/v1/logout",{method:"POST",headers:{"apikey":SUPA_KEY,"Authorization":"Bearer "+_session.access_token}}):Promise.resolve();
+      _session=null;try{localStorage.removeItem("sb_session");}catch(x){}return p;
+    }
   },
   from:function(table){
     var token=_session?_session.access_token:SUPA_KEY;
     var h={"apikey":SUPA_KEY,"Authorization":"Bearer "+token,"Content-Type":"application/json","Prefer":"return=representation"};
-    return{
-      select:function(){
-        var url=SUPA_URL+"/rest/v1/"+table+"?select=*";
-        var obj={
-          order:function(col,opts){url+="&order="+col+(opts&&opts.ascending===false?".desc":".asc");return obj;},
-          then:function(resolve){return fetch(url,{headers:h}).then(function(r){return r.json();}).then(function(d){return resolve({data:Array.isArray(d)?d:[],error:null});}).catch(function(e){return resolve({data:[],error:e});});}
-        };
-        return obj;
+    var url=SUPA_URL+"/rest/v1/"+table+"?select=*";
+    var obj={
+      select:function(){return obj;},
+      order:function(col,opts){url+="&order="+col+(opts&&opts.ascending===false?".desc":".asc");return obj;},
+      upsert:function(row){
+        return fetch(SUPA_URL+"/rest/v1/"+table,{method:"POST",headers:Object.assign({},h,{"Prefer":"resolution=merge-duplicates,return=minimal"}),body:JSON.stringify(row)})
+        .then(function(){return{error:null};}).catch(function(e){return{error:e};});
       },
-      upsert:function(row){return fetch(SUPA_URL+"/rest/v1/"+table,{method:"POST",headers:Object.assign({},h,{"Prefer":"resolution=merge-duplicates,return=minimal"}),body:JSON.stringify(row)}).then(function(){return{error:null};}).catch(function(e){return{error:e};});},
-      delete:function(){return{eq:function(col,val){return fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"DELETE",headers:h}).then(function(){return{error:null};}).catch(function(e){return{error:e};});}};}
+      delete:function(){
+        return{eq:function(col,val){
+          return fetch(SUPA_URL+"/rest/v1/"+table+"?"+col+"=eq."+encodeURIComponent(val),{method:"DELETE",headers:h})
+          .then(function(){return{error:null};}).catch(function(e){return{error:e};});
+        }};
+      },
+      then:function(resolve){
+        return fetch(url,{headers:h}).then(function(r){return r.json();})
+        .then(function(d){return resolve({data:Array.isArray(d)?d:[],error:null});})
+        .catch(function(e){return resolve({data:[],error:e});});
+      }
     };
+    return obj;
   }
 };
+
 var e=R.createElement;
-function calcStats(arr,res){var p=0,f=0,b=0;arr.forEach(function(t){var s=(res[t.id]&&res[t.id].status)||"Untested";if(s==="Pass")p++;else if(s==="Fail")f++;else if(s==="Blocked")b++;});var tot=arr.length,tested=p+f+b;return{total:tot,pass:p,fail:f,blocked:b,tested:tested,score:tot?Math.round(p/tot*100):0,comp:tot?Math.round(tested/tot*100):0};}
+
+function calcStats(arr,res){
+  var p=0,f=0,b=0;
+  arr.forEach(function(t){var s=(res[t.id]&&res[t.id].status)||"Untested";if(s==="Pass")p++;else if(s==="Fail")f++;else if(s==="Blocked")b++;});
+  var tot=arr.length,tested=p+f+b;
+  return{total:tot,pass:p,fail:f,blocked:b,tested:tested,score:tot?Math.round(p/tot*100):0,comp:tot?Math.round(tested/tot*100):0};
+}
+
 function SevB(p){var c=SV[p.sev]||SV.Low;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"1px 7px",fontSize:10,fontWeight:700}},p.sev);}
 function SysB(p){var c=SC[p.sys]||SC.Custom;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"2px 8px",fontSize:11,fontWeight:700}},p.sys);}
 function StaB(p){var c=ST[p.status]||ST.Untested;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:20,padding:"2px 9px",fontSize:10,fontWeight:700}},p.status);}
@@ -83,11 +112,11 @@ function LoginScreen(p){
       e("input",{type:"email",value:email,onChange:function(x){setEmail(x.target.value);},onKeyDown:function(x){if(x.key==="Enter")login();},placeholder:"Email address",style:inp}),
       e("input",{type:"password",value:pass,onChange:function(x){setPass(x.target.value);},onKeyDown:function(x){if(x.key==="Enter")login();},placeholder:"Password",style:Object.assign({},inp,{marginBottom:err?8:18})}),
       err?e("div",{style:{color:"#f87171",fontSize:12,marginBottom:14,textAlign:"left",background:"rgba(239,68,68,.1)",borderRadius:6,padding:"8px 12px"}},err):null,
-      e("button",{onClick:login,disabled:loading,style:{width:"100%",background:loading?"#334155":"#3b82f6",color:loading?"#64748b":"#fff",border:"none",borderRadius:8,padding:"13px",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer"}},
-        loading?"Signing in...":"Sign In"),
+      e("button",{onClick:login,disabled:loading,style:{width:"100%",background:loading?"#334155":"#3b82f6",color:loading?"#64748b":"#fff",border:"none",borderRadius:8,padding:"13px",fontSize:14,fontWeight:700,cursor:loading?"not-allowed":"pointer"}},loading?"Signing in...":"Sign In"),
       e("div",{style:{fontSize:11,color:"#475569",marginTop:20}},"Contact your admin if you need access.")));
 }
-var BUILT_IN=[
+
+var TESTS=[
 {id:"POS-F01",sys:"POS",cat:"Functional",sev:"Critical",name:"Open a new order",expected:"New order created with unique order number and timestamp. Item panel is empty and ready."},
 {id:"POS-F02",sys:"POS",cat:"Functional",sev:"Critical",name:"Add a single item to order",expected:"Item appears on ticket with correct name, qty 1, and price. Subtotal updates."},
 {id:"POS-F03",sys:"POS",cat:"Functional",sev:"Critical",name:"Add items across multiple categories",expected:"All items from different categories appear on ticket. Subtotal equals sum of all prices."},
@@ -194,11 +223,11 @@ var BUILT_IN=[
 {id:"BK-PL07",sys:"Backend",cat:"Price Lists",sev:"Medium",name:"Export price list to CSV",expected:"CSV exports with all items, categories, and overridden prices. Format is clean."},
 {id:"BK-PL08",sys:"Backend",cat:"Price Lists",sev:"Medium",name:"Import price list from CSV",expected:"All prices import correctly. Validation catches malformed rows. Success summary shown."},
 {id:"BK-PL09",sys:"Backend",cat:"Price Lists",sev:"High",name:"Price list priority when multiple assigned",expected:"Highest priority price list takes precedence. Priority order is configurable and respected."},
-{id:"BK-PL10",sys:"Backend",cat:"Price Lists",sev:"High",name:"Price list change reflects on POS in real time",expected:"After publishing a price list change, POS reflects new prices within 30 seconds without restart."},
-{id:"BK-PL11",sys:"Backend",cat:"Price Lists",sev:"Medium",name:"Price list with zero dollar item",expected:"$0 price accepted and applied on POS without triggering payment flow."},
+{id:"BK-PL10",sys:"Backend",cat:"Price Lists",sev:"High",name:"Price list change reflects on POS in real time",expected:"After publishing a price list change POS reflects new prices within 30 seconds without restart."},
+{id:"BK-PL11",sys:"Backend",cat:"Price Lists",sev:"Medium",name:"Price list with zero dollar item",expected:"Zero price accepted and applied on POS without triggering payment flow."},
 {id:"BK-PL12",sys:"Backend",cat:"Price Lists",sev:"High",name:"Cannot save price list with missing fields",expected:"Validation error shown. Price list not saved until all required fields are filled."},
 {id:"BK-PL13",sys:"Backend",cat:"Price Lists",sev:"Medium",name:"Price list loads under 2 seconds with 500 items",expected:"Price list with 500 items loads and renders in backend in under 2 seconds."},
-{id:"BK-MM01",sys:"Backend",cat:"Menu Modifiers",sev:"Critical",name:"Create modifier group from backend",expected:"Modifier group saved with name, type, and min/max selections. Available to attach to items."},
+{id:"BK-MM01",sys:"Backend",cat:"Menu Modifiers",sev:"Critical",name:"Create modifier group from backend",expected:"Modifier group saved with name type and min/max selections. Available to attach to items."},
 {id:"BK-MM02",sys:"Backend",cat:"Menu Modifiers",sev:"Critical",name:"Add modifier options with price adjustments",expected:"Each option saved with name and price delta. Price adjustments appear correctly on POS."},
 {id:"BK-MM03",sys:"Backend",cat:"Menu Modifiers",sev:"Critical",name:"Set modifier as required",expected:"POS blocks item from being added without a selection from this group."},
 {id:"BK-MM04",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Set min and max selections on modifier",expected:"POS enforces min and max selection count. Cannot proceed outside these bounds."},
@@ -206,24 +235,24 @@ var BUILT_IN=[
 {id:"BK-MM06",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Detach modifier group from an item",expected:"Item no longer shows modifier prompt on POS. Other items with same group unaffected."},
 {id:"BK-MM07",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Reorder modifier options",expected:"Options appear in updated order on POS modifier prompt."},
 {id:"BK-MM08",sys:"Backend",cat:"Menu Modifiers",sev:"Medium",name:"Deactivate a modifier option",expected:"Deactivated option no longer appears on POS. Other options in group unaffected."},
-{id:"BK-MM09",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Modifier group change syncs to POS",expected:"After saving changes to modifier group, POS reflects changes within 30 seconds."},
+{id:"BK-MM09",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Modifier group change syncs to POS",expected:"After saving changes to modifier group POS reflects changes within 30 seconds."},
 {id:"BK-MM10",sys:"Backend",cat:"Menu Modifiers",sev:"High",name:"Cannot save modifier with no options",expected:"Validation blocks saving a modifier group with zero options. Error message shown."},
 {id:"BK-MM11",sys:"Backend",cat:"Menu Modifiers",sev:"Medium",name:"Modifier with negative price adjustment",expected:"Negative price adjustment reduces item price correctly on POS ticket."},
 {id:"BK-MM12",sys:"Backend",cat:"Menu Modifiers",sev:"Medium",name:"50 modifier options load without lag",expected:"Modifier group with 50 options loads on POS without delay or layout issues."},
-{id:"BK-US01",sys:"Backend",cat:"Users",sev:"Critical",name:"Create a new user account",expected:"User saved with name, email, PIN, and role. User can log in to POS with assigned credentials."},
+{id:"BK-US01",sys:"Backend",cat:"Users",sev:"Critical",name:"Create a new user account",expected:"User saved with name email PIN and role. User can log in to POS with assigned credentials."},
 {id:"BK-US02",sys:"Backend",cat:"Users",sev:"Critical",name:"Assign role to user",expected:"User can only access features permitted by their role. Restricted features hidden or blocked."},
 {id:"BK-US03",sys:"Backend",cat:"Users",sev:"Critical",name:"Manager override requires manager PIN",expected:"Actions requiring override prompt for manager PIN. Wrong PIN rejected. Correct PIN allows action."},
 {id:"BK-US04",sys:"Backend",cat:"Users",sev:"High",name:"Deactivate a user account",expected:"Deactivated user cannot log in to POS. Their historical transactions remain in records."},
 {id:"BK-US05",sys:"Backend",cat:"Users",sev:"High",name:"Reset user PIN",expected:"New PIN saved. User can log in with new PIN. Old PIN rejected immediately."},
 {id:"BK-US06",sys:"Backend",cat:"Users",sev:"Critical",name:"Staff role cannot access backend",expected:"Staff user has no access to backend admin panel. Direct URL attempt shows access denied."},
 {id:"BK-US07",sys:"Backend",cat:"Users",sev:"High",name:"Manager can void orders staff cannot",expected:"Manager can void any order. Staff cannot void without manager override PIN."},
-{id:"BK-US08",sys:"Backend",cat:"Users",sev:"High",name:"Admin can create and delete users",expected:"Admin can create, edit, and delete any user. Manager cannot delete other managers."},
+{id:"BK-US08",sys:"Backend",cat:"Users",sev:"High",name:"Admin can create and delete users",expected:"Admin can create edit and delete any user. Manager cannot delete other managers."},
 {id:"BK-US09",sys:"Backend",cat:"Users",sev:"Medium",name:"User activity log tracks all actions",expected:"Backend log shows which user performed each action with timestamp. Log cannot be edited."},
 {id:"BK-US10",sys:"Backend",cat:"Users",sev:"High",name:"Multiple users logged in simultaneously",expected:"Each user session is independent. One user logging out does not affect other active sessions."},
 {id:"BK-US11",sys:"Backend",cat:"Users",sev:"Medium",name:"Cannot create user with duplicate PIN",expected:"Validation blocks saving a user with a PIN already assigned to another user."},
 {id:"BK-US12",sys:"Backend",cat:"Users",sev:"High",name:"User assigned to specific terminal only",expected:"User can only log in to their assigned terminal. Login on other terminal is blocked."},
 {id:"BK-US13",sys:"Backend",cat:"Users",sev:"Medium",name:"100 concurrent users do not degrade performance",expected:"System remains responsive with 100 active user sessions. Response time under 2 seconds."},
-{id:"BK-TB01",sys:"Backend",cat:"Tables",sev:"Critical",name:"Create a new table",expected:"Table saved with number, section, and capacity. Appears on POS floor plan immediately."},
+{id:"BK-TB01",sys:"Backend",cat:"Tables",sev:"Critical",name:"Create a new table",expected:"Table saved with number section and capacity. Appears on POS floor plan immediately."},
 {id:"BK-TB02",sys:"Backend",cat:"Tables",sev:"Critical",name:"Create a floor plan section",expected:"Section saved with name. Tables can be assigned to it. POS floor plan shows section grouping."},
 {id:"BK-TB03",sys:"Backend",cat:"Tables",sev:"High",name:"Move table position on floor plan",expected:"Table position updates on POS floor plan. No other tables affected."},
 {id:"BK-TB04",sys:"Backend",cat:"Tables",sev:"High",name:"Merge two tables",expected:"Merged table shows combined capacity. Orders can be assigned to merged table on POS."},
@@ -235,24 +264,24 @@ var BUILT_IN=[
 {id:"BK-TB10",sys:"Backend",cat:"Tables",sev:"High",name:"Cannot delete table with open order",expected:"System blocks deletion if table has an open order. Clear error message shown."},
 {id:"BK-TB11",sys:"Backend",cat:"Tables",sev:"Medium",name:"Floor plan loads within 2 seconds with 50 tables",expected:"Floor plan with 50 tables renders on POS and backend in under 2 seconds."},
 {id:"BK-TB12",sys:"Backend",cat:"Tables",sev:"High",name:"Table change syncs to all terminals",expected:"Table added or renamed in backend appears on all active POS terminals within 30 seconds."},
-{id:"BK-QU01",sys:"Backend",cat:"Qualifiers",sev:"Critical",name:"Create a new qualifier",expected:"Qualifier saved with name, type, and rules. Available to attach to menu items."},
+{id:"BK-QU01",sys:"Backend",cat:"Qualifiers",sev:"Critical",name:"Create a new qualifier",expected:"Qualifier saved with name type and rules. Available to attach to menu items."},
 {id:"BK-QU02",sys:"Backend",cat:"Qualifiers",sev:"Critical",name:"Attach qualifier to a menu item",expected:"Qualifier prompt appears on POS when item is added to order."},
 {id:"BK-QU03",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Qualifier with preset options",expected:"Staff selects from preset options on POS. Selection recorded on ticket and KDS."},
 {id:"BK-QU04",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Qualifier with free text input",expected:"Staff can type custom qualifier text on POS. Text appears on ticket and KDS."},
 {id:"BK-QU05",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Required qualifier blocks order without input",expected:"Order cannot proceed without qualifier input when set as required."},
 {id:"BK-QU06",sys:"Backend",cat:"Qualifiers",sev:"Medium",name:"Qualifier applies to entire order",expected:"Order-level qualifier prompt appears at checkout. Selection recorded on ticket."},
 {id:"BK-QU07",sys:"Backend",cat:"Qualifiers",sev:"Medium",name:"Deactivate a qualifier",expected:"Qualifier no longer appears on POS. Items it was attached to are unaffected otherwise."},
-{id:"BK-QU08",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Qualifier change syncs to POS in real time",expected:"After saving qualifier change in backend, POS reflects it within 30 seconds."},
+{id:"BK-QU08",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Qualifier change syncs to POS in real time",expected:"After saving qualifier change in backend POS reflects it within 30 seconds."},
 {id:"BK-QU09",sys:"Backend",cat:"Qualifiers",sev:"Medium",name:"Cannot save qualifier with no name",expected:"Validation blocks saving qualifier without a name. Clear error shown."},
 {id:"BK-QU10",sys:"Backend",cat:"Qualifiers",sev:"High",name:"Qualifier data visible in order history",expected:"Qualifier selections are visible when reviewing completed orders in backend."},
 {id:"BK-TX01",sys:"Backend",cat:"Tax Config",sev:"Critical",name:"Create a tax rate",expected:"Tax rate saved with name and percentage. Available to assign to menu items and categories."},
 {id:"BK-TX02",sys:"Backend",cat:"Tax Config",sev:"Critical",name:"Assign tax rate to menu item category",expected:"All items in category use assigned tax rate at POS checkout."},
 {id:"BK-TX03",sys:"Backend",cat:"Tax Config",sev:"Critical",name:"Assign different tax rates to different items",expected:"Each item calculates tax at its own assigned rate. Order total reflects sum of all taxes."},
-{id:"BK-TX04",sys:"Backend",cat:"Tax Config",sev:"High",name:"Tax-exempt item",expected:"Item marked as tax exempt shows $0 tax on ticket. Does not affect tax on other items."},
+{id:"BK-TX04",sys:"Backend",cat:"Tax Config",sev:"High",name:"Tax-exempt item",expected:"Item marked as tax exempt shows zero tax on ticket. Does not affect tax on other items."},
 {id:"BK-TX05",sys:"Backend",cat:"Tax Config",sev:"High",name:"Tax inclusive pricing",expected:"Item price shown on POS includes tax. Receipt shows breakdown of price and tax component."},
 {id:"BK-TX06",sys:"Backend",cat:"Tax Config",sev:"High",name:"Tax exclusive pricing",expected:"Item price shown on POS excludes tax. Tax added as separate line at checkout."},
 {id:"BK-TX07",sys:"Backend",cat:"Tax Config",sev:"High",name:"Update tax rate reflects on POS immediately",expected:"Updated rate applies to all new orders within 30 seconds. Historical orders retain original rate."},
-{id:"BK-TX08",sys:"Backend",cat:"Tax Config",sev:"Medium",name:"Cannot save tax rate above 100 percent",expected:"Validation blocks saving a tax rate above 100%. Clear error shown."},
+{id:"BK-TX08",sys:"Backend",cat:"Tax Config",sev:"Medium",name:"Cannot save tax rate above 100 percent",expected:"Validation blocks saving a tax rate above 100 percent. Clear error shown."},
 {id:"BK-TX09",sys:"Backend",cat:"Tax Config",sev:"Medium",name:"Cannot save tax rate with no name",expected:"Validation blocks saving unnamed tax rate. Error message shown."},
 {id:"BK-TX10",sys:"Backend",cat:"Tax Config",sev:"High",name:"Multiple tax rates on single order calculate correctly",expected:"Each line item taxed at its own rate. Total tax on receipt equals sum of all individual taxes."},
 {id:"BK-PS01",sys:"Backend",cat:"Payment Settings",sev:"Critical",name:"Configure Stripe API keys",expected:"Valid keys save successfully. Test and live mode keys stored separately. POS connects using saved keys."},
@@ -261,10 +290,10 @@ var BUILT_IN=[
 {id:"BK-PS04",sys:"Backend",cat:"Payment Settings",sev:"High",name:"Set automatic service charge",expected:"Service charge applies automatically to qualifying orders. Shown as line item on ticket."},
 {id:"BK-PS05",sys:"Backend",cat:"Payment Settings",sev:"High",name:"Configure cash handling",expected:"Cash payment option available on POS. Cash drawer opens on cash payment. Cash counted in EOD report."},
 {id:"BK-PS06",sys:"Backend",cat:"Payment Settings",sev:"Medium",name:"Set minimum card transaction amount",expected:"POS blocks card payment below minimum amount. Clear message shown to staff."},
-{id:"BK-PS07",sys:"Backend",cat:"Payment Settings",sev:"Medium",name:"Configure receipt header and footer",expected:"Receipt header, footer, and logo settings save and appear on printed and emailed receipts."},
+{id:"BK-PS07",sys:"Backend",cat:"Payment Settings",sev:"Medium",name:"Configure receipt header and footer",expected:"Receipt header footer and logo settings save and appear on printed and emailed receipts."},
 {id:"BK-PS08",sys:"Backend",cat:"Payment Settings",sev:"Critical",name:"Switch from test mode to live mode",expected:"Live mode activates. Real Stripe reader connects. Test cards no longer accepted."},
 {id:"BK-PS09",sys:"Backend",cat:"Payment Settings",sev:"High",name:"Invalid Stripe API key is rejected",expected:"Saving an invalid API key shows a clear error. POS does not attempt to connect with invalid key."},
-{id:"BK-PS10",sys:"Backend",cat:"Payment Settings",sev:"High",name:"Payment settings change reflects on POS immediately",expected:"After saving payment settings change, POS reflects it without requiring a restart."},
+{id:"BK-PS10",sys:"Backend",cat:"Payment Settings",sev:"High",name:"Payment settings change reflects on POS immediately",expected:"After saving payment settings change POS reflects it without requiring a restart."},
 {id:"BK-PS11",sys:"Backend",cat:"Payment Settings",sev:"Medium",name:"Refund settings respect configured limits",expected:"Refund time window and amount limits configured in backend are enforced on POS."},
 {id:"BK-PS12",sys:"Backend",cat:"Payment Settings",sev:"Medium",name:"Only admin can change payment settings",expected:"Manager and staff roles cannot access or modify payment settings. Admin only."}
 ];
@@ -283,22 +312,22 @@ function App(){
 
   R.useEffect(function(){
     sb.auth.getSession().then(function(r){
-      if(r.data.session){setUser(r.data.session.user);} 
+      if(r.data.session){setUser(r.data.session.user);}
       else{setLoading(false);}
     });
   },[]);
 
   function reload(){
-    if(!_session)return;
+    if(!_session){return;}
     Promise.all([
-      sb.from("qa_results").select("*"),
-      sb.from("qa_custom_tests").select("*").order("created_at",{ascending:true})
+      sb.from("qa_results").select(),
+      sb.from("qa_custom_tests").select().order("created_at",{ascending:true})
     ]).then(function(results){
       var rr=results[0];var cr=results[1];
       var map={};
-      if(rr.data)rr.data.forEach(function(row){map[row.id]={status:row.status,notes:row.notes,by:row.updated_by,at:row.updated_at};});
+      if(rr.data){rr.data.forEach(function(row){map[row.id]={status:row.status,notes:row.notes,by:row.updated_by,at:row.updated_at};});}
       setRes(map);
-      if(cr.data)setCustomTests(cr.data);
+      if(cr.data){setCustomTests(cr.data);}
       setLoading(false);
     }).catch(function(){setSyncMsg("Connection error");setLoading(false);});
   }
@@ -310,37 +339,27 @@ function App(){
   function upd(id,field,val){
     var testerName=user&&user.user_metadata&&user.user_metadata.full_name?user.user_metadata.full_name:user?user.email:"Unknown";
     var prev=res[id]||{status:"Untested",notes:"",by:"",at:""};
-    var next=Object.assign({},prev,{[field]:val,by:testerName,at:new Date().toLocaleString()});
+    var next=Object.assign({},prev);next[field]=val;next.by=testerName;next.at=new Date().toLocaleString();
     setRes(function(r){var n=Object.assign({},r);n[id]=next;return n;});
     setSyncMsg("Saving...");
-    sb.from("qa_results").upsert({id:id,status:next.status,notes:next.notes,updated_by:next.by,updated_at:next.at}).then(function(){setSyncMsg("Saved \u2713");setTimeout(function(){setSyncMsg(null);},2000);}).catch(function(){setSyncMsg("Save failed");});
+    sb.from("qa_results").upsert({id:id,status:next.status,notes:next.notes,updated_by:next.by,updated_at:next.at}).then(function(){setSyncMsg("Saved");setTimeout(function(){setSyncMsg(null);},2000);}).catch(function(){setSyncMsg("Save failed");});
   }
 
-  function addCustomTest(t){
-    setCustomTests(function(prev){return prev.concat([t]);});
-    sb.from("qa_custom_tests").upsert(t);
-    setShowAdd(false);
-  }
-
-  function delCustomTest(id){
-    setCustomTests(function(prev){return prev.filter(function(t){return t.id!==id;});});
-    sb.from("qa_custom_tests").delete().eq("id",id);
-  }
-
+  function addCustomTest(t){setCustomTests(function(prev){return prev.concat([t]);});sb.from("qa_custom_tests").upsert(t);setShowAdd(false);}
+  function delCustomTest(id){setCustomTests(function(prev){return prev.filter(function(t){return t.id!==id;});});sb.from("qa_custom_tests").delete().eq("id",id);}
   function logout(){sb.auth.signOut().then(function(){setUser(null);setRes({});setCustomTests([]);setLoading(false);});}
 
-  if(loading&&!user)return e("div",{style:{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}},e("div",{style:{width:36,height:36,border:"4px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}),e("div",{style:{color:"#64748b",fontSize:13}},"Loading..."));
-
-  if(!user)return e(LoginScreen,{onLogin:function(u){setUser(u);setLoading(true);}});
-
-  if(loading)return e("div",{style:{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}},e("div",{style:{width:36,height:36,border:"4px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}),e("div",{style:{color:"#64748b",fontSize:13}},"Loading shared results..."));
+  if(loading&&!user){return e("div",{style:{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}},e("div",{style:{width:36,height:36,border:"4px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}),e("div",{style:{color:"#64748b",fontSize:13}},"Loading..."),e("style",null,"@keyframes spin{to{transform:rotate(360deg)}}"));}
+  if(!user){return e(LoginScreen,{onLogin:function(u){setUser(u);setLoading(true);}});}
+  if(loading){return e("div",{style:{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:16}},e("div",{style:{width:36,height:36,border:"4px solid #334155",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}),e("div",{style:{color:"#64748b",fontSize:13}},"Loading shared results..."),e("style",null,"@keyframes spin{to{transform:rotate(360deg)}}"));}
 
   var testerName=user.user_metadata&&user.user_metadata.full_name?user.user_metadata.full_name:user.email;
-  var allTests=BUILT_IN.concat(customTests.map(function(t){return Object.assign({},t,{sys:t.sys||"Custom"});}));
+  var allTests=TESTS.concat(customTests.map(function(t){return Object.assign({},t,{sys:t.sys||"Custom"});}));
   var filtered=allTests.filter(function(t){if(fSys!=="All"&&t.sys!==fSys)return false;if(fSt!=="All"&&((res[t.id]&&res[t.id].status)||"Untested")!==fSt)return false;return true;});
   var ov=calcStats(allTests,res);
   var scc=ov.score>=95?"#4ade80":ov.score>=80?"#facc15":"#f87171";
   var hb={border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700};
+  var customIds=customTests.map(function(t){return t.id;});
 
   return e("div",{style:{fontFamily:"system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh"}},
     e("style",null,"@keyframes spin{to{transform:rotate(360deg)}}"),
@@ -359,7 +378,8 @@ function App(){
       e("div",{style:{flex:1,minWidth:180}},
         e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginBottom:4}},e("span","Completion"),e("span",ov.comp+"%")),
         e("div",{style:{background:"#334155",borderRadius:99,height:8}},e("div",{style:{background:"#3b82f6",width:ov.comp+"%",height:"100%",borderRadius:99}})),
-        e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginTop:5}},e("span","Pass Score"),e("span",{style:{fontWeight:800,fontSize:14,color:scc}},ov.score+"% "+(ov.score>=95?"\uD83D\uDFE2":ov.score>=80?"\uD83D\uDFE1":"\uD83D\uDD34")))),
+        e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginTop:5}},
+          e("span","Pass Score"),e("span",{style:{fontWeight:800,fontSize:14,color:scc}},ov.score+"% "+(ov.score>=95?"\uD83D\uDFE2":ov.score>=80?"\uD83D\uDFE1":"\uD83D\uDD34")))),
       [["Total",ov.total,"#fff"],["Pass",ov.pass,"#4ade80"],["Fail",ov.fail,"#f87171"],["Blocked",ov.blocked,"#facc15"],["Untested",ov.total-ov.tested,"#64748b"]].map(function(it){return e("div",{key:it[0],style:{textAlign:"center"}},e("div",{style:{color:it[2],fontWeight:800,fontSize:19}},it[1]),e("div",{style:{fontSize:10,color:"#64748b",textTransform:"uppercase"}},it[0]));})),
     e("div",{style:{background:"#1e293b",borderTop:"1px solid #0f172a",padding:"8px 20px",display:"flex",gap:12,flexWrap:"wrap"}},
       ["POS","KDS","Menu","Stripe","Backend"].map(function(sys){var c=SC[sys];var s=calcStats(allTests.filter(function(t){return t.sys===sys;}),res);return e("div",{key:sys,style:{display:"flex",alignItems:"center",gap:7,minWidth:140}},e(SysB,{sys:sys}),e("div",{style:{flex:1,background:"#334155",borderRadius:99,height:5,minWidth:60}},e("div",{style:{background:c.bar,width:s.score+"%",height:"100%",borderRadius:99}})),e("span",{style:{color:"#94a3b8",fontSize:11}},s.pass+"/"+s.total));})),
@@ -367,51 +387,68 @@ function App(){
       e("span",{style:{fontSize:12,color:"#64748b",fontWeight:700}},"Filter:"),
       e("select",{value:fSys,onChange:function(x){setFS(x.target.value);},style:{border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 9px",fontSize:12,color:"#1e293b",background:"#fff"}},["All","POS","KDS","Menu","Stripe","Backend","Custom"].map(function(o){return e("option",{key:o},o);})),
       e("select",{value:fSt,onChange:function(x){setFSt(x.target.value);},style:{border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 9px",fontSize:12,color:"#1e293b",background:"#fff"}},["All","Untested","Pass","Fail","Blocked"].map(function(o){return e("option",{key:o},o);})),
-      e("div",{style:{display:"flex",background:"#f1f5f9",borderRadius:6,padding:2,gap:2,marginLeft:"auto"}},["board","table"].map(function(v){return e("button",{key:v,onClick:function(){setV(v);},style:{background:view===v?"#fff":"transparent",color:view===v?"#1e293b":"#94a3b8",border:"none",borderRadius:5,padding:"4px 12px",cursor:"pointer",fontSize:12,fontWeight:600,boxShadow:view===v?"0 1px 3px rgba(0,0,0,.1)":"none"}},v==="board"?"Board":"Table");})),
+      e("div",{style:{display:"flex",background:"#f1f5f9",borderRadius:6,padding:2,gap:2,marginLeft:"auto"}},
+        ["board","table"].map(function(v){return e("button",{key:v,onClick:function(){setV(v);},style:{background:view===v?"#fff":"transparent",color:view===v?"#1e293b":"#94a3b8",border:"none",borderRadius:5,padding:"4px 12px",cursor:"pointer",fontSize:12,fontWeight:600,boxShadow:view===v?"0 1px 3px rgba(0,0,0,.1)":"none"}},v==="board"?"Board":"Table");})),
       e("span",{style:{fontSize:11,color:"#94a3b8"}},filtered.length+" shown")),
-    e("div",{style:{padding:18}},view==="board"?e(BoardView,{tests:filtered,res:res,onOpen:setM,onDelete:delCustomTest,customIds:customTests.map(function(t){return t.id;})}):e(TableView,{tests:filtered,res:res,upd:upd,onDelete:delCustomTest,customIds:customTests.map(function(t){return t.id;})})),
+    e("div",{style:{padding:18}},
+      view==="board"
+        ?e(BoardView,{tests:filtered,res:res,onOpen:setM,onDelete:delCustomTest,customIds:customIds})
+        :e(TableView,{tests:filtered,res:res,upd:upd,onDelete:delCustomTest,customIds:customIds})),
     modal?e(ModalView,{id:modal,allTests:allTests,res:res,testerName:testerName,upd:upd,onClose:function(){setM(null);}}):null,
     showAdd?e(AddModal,{testerName:testerName,onSave:addCustomTest,onClose:function(){setShowAdd(false);}}):null);
 }
 
 function BoardView(p){
-  var g={};p.tests.forEach(function(t){if(!g[t.sys])g[t.sys]={};if(!g[t.sys][t.cat])g[t.sys][t.cat]=[];g[t.sys][t.cat].push(t);});
+  var g={};
+  p.tests.forEach(function(t){if(!g[t.sys])g[t.sys]={};if(!g[t.sys][t.cat])g[t.sys][t.cat]=[];g[t.sys][t.cat].push(t);});
   return e("div",null,["POS","KDS","Menu","Stripe","Backend","Custom"].filter(function(s){return g[s];}).map(function(sys){
-    var c=SC[sys]||SC.Custom;var all=Object.values(g[sys]).reduce(function(a,b){return a.concat(b);},[]);
+    var c=SC[sys]||SC.Custom;
+    var all=Object.values(g[sys]).reduce(function(a,b){return a.concat(b);},[]);
     var pass=all.filter(function(t){return(p.res[t.id]&&p.res[t.id].status)==="Pass";}).length;
     return e("div",{key:sys,style:{marginBottom:26}},
-      e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:6,padding:"4px 13px",fontWeight:800,fontSize:13}},SN[sys]||sys),e("span",{style:{fontSize:12,color:"#94a3b8"}},pass+"/"+all.length+" passing")),
-      Object.keys(g[sys]).map(function(cat){return e("div",{key:cat},
-        e("div",{style:{fontSize:11,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:1,marginBottom:7,marginTop:11}},cat),
-        e("div",{className:"grid"},g[sys][cat].map(function(t){
-          var r=p.res[t.id]||{};var st=r.status||"Untested";var sc=ST[st];
-          var bc=st==="Pass"?"#86efac":st==="Fail"?"#fca5a5":st==="Blocked"?"#fcd34d":"#e2e8f0";
-          var isC=p.customIds.indexOf(t.id)!==-1;
-          return e("div",{key:t.id,style:{background:"#fff",border:"2px solid "+bc,borderRadius:8,padding:13,cursor:"pointer",position:"relative"}},
-            e("div",{onClick:function(){p.onOpen(t.id);}},
-              e("div",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8",display:"flex",justifyContent:"space-between",marginBottom:3}},e("span",null,t.id),isC?e("span",{style:{background:"#f0fdf4",color:"#166534",borderRadius:4,padding:"0 5px",fontSize:9,fontWeight:700}},"CUSTOM"):null),
-              e("div",{style:{fontWeight:700,fontSize:13,color:"#0f172a",marginBottom:4}},t.name),
-              e("div",{style:{fontSize:11,color:"#64748b",lineHeight:1.45,marginBottom:8}},t.expected.length>85?t.expected.substring(0,85)+"...":t.expected),
-              e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between"}},e(SevB,{sev:t.sev}),e(StaB,{status:st})),
-              r.notes?e("div",{style:{marginTop:7,fontSize:10,color:"#64748b",background:"#f8fafc",borderRadius:4,padding:"4px 7px",borderLeft:"3px solid #cbd5e1"}},r.notes.substring(0,80)):null,
-              r.by?e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:4}},"By "+r.by+" \u00B7 "+r.at):null),
-            isC?e("button",{onClick:function(ev){ev.stopPropagation();if(confirm("Delete this test?"))p.onDelete(t.id);},style:{position:"absolute",top:8,right:8,background:"#fee2e2",border:"none",color:"#991b1b",borderRadius:4,padding:"2px 7px",fontSize:10,cursor:"pointer",fontWeight:700}},"\u2715 Delete"):null);})));}));}
+      e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},
+        e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:6,padding:"4px 13px",fontWeight:800,fontSize:13}},SN[sys]||sys),
+        e("span",{style:{fontSize:12,color:"#94a3b8"}},pass+"/"+all.length+" passing")),
+      Object.keys(g[sys]).map(function(cat){
+        return e("div",{key:cat},
+          e("div",{style:{fontSize:11,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:1,marginBottom:7,marginTop:11}},cat),
+          e("div",{className:"grid"},g[sys][cat].map(function(t){
+            var r=p.res[t.id]||{};var st=r.status||"Untested";var sc=ST[st];
+            var bc=st==="Pass"?"#86efac":st==="Fail"?"#fca5a5":st==="Blocked"?"#fcd34d":"#e2e8f0";
+            var isC=p.customIds.indexOf(t.id)!==-1;
+            return e("div",{key:t.id,style:{background:"#fff",border:"2px solid "+bc,borderRadius:8,padding:13,cursor:"pointer",position:"relative"}},
+              e("div",{onClick:function(){p.onOpen(t.id);}},
+                e("div",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8",display:"flex",justifyContent:"space-between",marginBottom:3}},
+                  e("span",null,t.id),isC?e("span",{style:{background:"#f0fdf4",color:"#166534",borderRadius:4,padding:"0 5px",fontSize:9,fontWeight:700}},"CUSTOM"):null),
+                e("div",{style:{fontWeight:700,fontSize:13,color:"#0f172a",marginBottom:4}},t.name),
+                e("div",{style:{fontSize:11,color:"#64748b",lineHeight:1.45,marginBottom:8}},t.expected.length>85?t.expected.substring(0,85)+"...":t.expected),
+                e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between"}},e(SevB,{sev:t.sev}),e(StaB,{status:st})),
+                r.notes?e("div",{style:{marginTop:7,fontSize:10,color:"#64748b",background:"#f8fafc",borderRadius:4,padding:"4px 7px",borderLeft:"3px solid #cbd5e1"}},r.notes.substring(0,80)):null,
+                r.by?e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:4}},"By "+r.by+" \u00B7 "+r.at):null),
+              isC?e("button",{onClick:function(ev){ev.stopPropagation();if(confirm("Delete this test?"))p.onDelete(t.id);},style:{position:"absolute",top:8,right:8,background:"#fee2e2",border:"none",color:"#991b1b",borderRadius:4,padding:"2px 7px",fontSize:10,cursor:"pointer",fontWeight:700}},"\u2715 Delete"):null);
+          })));
+      }));
+  }));
 }
 
 function TableView(p){
-  return e("div",{style:{overflowX:"auto"}},e("table",{style:{background:"#fff",borderRadius:8,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}},
-    e("thead",null,e("tr",null,["ID","System","Sev","Test Name","Expected","Status","Notes","By",""].map(function(h){return e("th",{key:h},h);}))),
-    e("tbody",null,p.tests.map(function(t,i){
-      var r=p.res[t.id]||{};var st=r.status||"Untested";var sc=ST[st];var isC=p.customIds.indexOf(t.id)!==-1;
-      return e("tr",{key:t.id,style:{background:i%2===0?"#fff":"#fafafa"}},
-        e("td",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},t.id),
-        e("td",null,e(SysB,{sys:t.sys})),e("td",null,e(SevB,{sev:t.sev})),
-        e("td",{style:{fontWeight:700,fontSize:12,maxWidth:160}},t.name),
-        e("td",{style:{fontSize:11,color:"#64748b",maxWidth:200}},t.expected),
-        e("td",null,e("select",{value:st,onChange:function(x){p.upd(t.id,"status",x.target.value);},style:{background:sc.bg,color:sc.color,border:"1px solid "+sc.border,borderRadius:5,padding:"3px 7px",fontSize:11,fontWeight:700,cursor:"pointer"}},["Untested","Pass","Fail","Blocked"].map(function(s){return e("option",{key:s},s);}))),
-        e("td",null,e("input",{defaultValue:r.notes||"",onBlur:function(x){p.upd(t.id,"notes",x.target.value);},placeholder:"Add note...",style:{border:"1px solid #e2e8f0",borderRadius:5,padding:"3px 7px",fontSize:11,width:"100%",minWidth:100}})),
-        e("td",{style:{fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},r.by||"\u2014"),
-        e("td",null,isC?e("button",{onClick:function(){if(confirm("Delete?"))p.onDelete(t.id);},style:{background:"#fee2e2",border:"none",color:"#991b1b",borderRadius:4,padding:"2px 7px",fontSize:10,cursor:"pointer",fontWeight:700}},"\u2715"):null));}))));}
+  return e("div",{style:{overflowX:"auto"}},
+    e("table",{style:{background:"#fff",borderRadius:8,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}},
+      e("thead",null,e("tr",null,["ID","System","Sev","Test Name","Expected","Status","Notes","By",""].map(function(h){return e("th",{key:h},h);}))),
+      e("tbody",null,p.tests.map(function(t,i){
+        var r=p.res[t.id]||{};var st=r.status||"Untested";var sc=ST[st];var isC=p.customIds.indexOf(t.id)!==-1;
+        return e("tr",{key:t.id,style:{background:i%2===0?"#fff":"#fafafa"}},
+          e("td",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},t.id),
+          e("td",null,e(SysB,{sys:t.sys})),
+          e("td",null,e(SevB,{sev:t.sev})),
+          e("td",{style:{fontWeight:700,fontSize:12,maxWidth:160}},t.name),
+          e("td",{style:{fontSize:11,color:"#64748b",maxWidth:200}},t.expected),
+          e("td",null,e("select",{value:st,onChange:function(x){p.upd(t.id,"status",x.target.value);},style:{background:sc.bg,color:sc.color,border:"1px solid "+sc.border,borderRadius:5,padding:"3px 7px",fontSize:11,fontWeight:700,cursor:"pointer"}},["Untested","Pass","Fail","Blocked"].map(function(s){return e("option",{key:s},s);}))),
+          e("td",null,e("input",{defaultValue:r.notes||"",onBlur:function(x){p.upd(t.id,"notes",x.target.value);},placeholder:"Add note...",style:{border:"1px solid #e2e8f0",borderRadius:5,padding:"3px 7px",fontSize:11,width:"100%",minWidth:100}})),
+          e("td",{style:{fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},r.by||"\u2014"),
+          e("td",null,isC?e("button",{onClick:function(){if(confirm("Delete?"))p.onDelete(t.id);},style:{background:"#fee2e2",border:"none",color:"#991b1b",borderRadius:4,padding:"2px 7px",fontSize:10,cursor:"pointer",fontWeight:700}},"\u2715"):null));
+      }))));
+}
 
 function ModalView(p){
   var t=p.allTests.find(function(x){return x.id===p.id;});if(!t)return null;
@@ -422,15 +459,25 @@ function ModalView(p){
   return e("div",{className:"overlay",onClick:function(x){if(x.target===x.currentTarget)p.onClose();}},
     e("div",{className:"modal"},
       e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}},
-        e("div",null,e("div",{style:{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}},e(SysB,{sys:t.sys}),e(SevB,{sev:t.sev}),e("span",{style:{fontFamily:"monospace",fontSize:11,color:"#94a3b8",alignSelf:"center"}},t.id)),e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},t.name),e("div",{style:{fontSize:12,color:"#94a3b8",marginTop:3}},t.cat)),
+        e("div",null,
+          e("div",{style:{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}},e(SysB,{sys:t.sys}),e(SevB,{sev:t.sev}),e("span",{style:{fontFamily:"monospace",fontSize:11,color:"#94a3b8",alignSelf:"center"}},t.id)),
+          e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},t.name),
+          e("div",{style:{fontSize:12,color:"#94a3b8",marginTop:3}},t.cat)),
         e("button",{onClick:p.onClose,style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94a3b8",lineHeight:1}},"\u00D7")),
-      e("div",{style:{background:"#f0fdf4",borderRadius:8,padding:13,marginBottom:13,borderLeft:"4px solid #4ade80"}},e("div",{style:{fontSize:10,fontWeight:700,color:"#166534",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Expected Result"),e("div",{style:{fontSize:13,color:"#166534",lineHeight:1.55}},t.expected)),
-      e("div",{style:{marginBottom:13}},e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:7}},"Result"),
-        e("div",{style:{display:"flex",gap:7}},["Untested","Pass","Fail","Blocked"].map(function(s){var sc=ST[s];var act=st===s;return e("button",{key:s,onClick:function(){p.upd(p.id,"status",s);},style:{flex:1,background:act?sc.bg:"#f8fafc",color:act?sc.color:"#94a3b8",border:"2px solid "+(act?sc.border:"#e2e8f0"),borderRadius:7,padding:"8px 4px",cursor:"pointer",fontSize:11,fontWeight:700}},s);}))),
-      e("div",null,e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Notes / Bug Description"),
+      e("div",{style:{background:"#f0fdf4",borderRadius:8,padding:13,marginBottom:13,borderLeft:"4px solid #4ade80"}},
+        e("div",{style:{fontSize:10,fontWeight:700,color:"#166534",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Expected Result"),
+        e("div",{style:{fontSize:13,color:"#166534",lineHeight:1.55}},t.expected)),
+      e("div",{style:{marginBottom:13}},
+        e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:7}},"Result"),
+        e("div",{style:{display:"flex",gap:7}},["Untested","Pass","Fail","Blocked"].map(function(s){
+          var sc=ST[s];var act=st===s;
+          return e("button",{key:s,onClick:function(){p.upd(p.id,"status",s);},style:{flex:1,background:act?sc.bg:"#f8fafc",color:act?sc.color:"#94a3b8",border:"2px solid "+(act?sc.border:"#e2e8f0"),borderRadius:7,padding:"8px 4px",cursor:"pointer",fontSize:11,fontWeight:700}},s);}))),
+      e("div",null,
+        e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Notes / Bug Description"),
         e("textarea",{value:notes,onChange:function(x){sno(x.target.value);},placeholder:"Describe what happened, expected vs actual, steps to reproduce...",style:{width:"100%",border:"1px solid #e2e8f0",borderRadius:7,padding:9,fontSize:13,minHeight:75,resize:"vertical",color:"#1e293b",display:"block"}}),
         e("button",{onClick:save,style:{marginTop:8,width:"100%",background:saved?"#16a34a":"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}},saved?"\u2713 Saved \u2013 All Testers Updated":"Save as "+p.testerName)),
-      r.by?e("div",{style:{fontSize:11,color:"#94a3b8",textAlign:"center",marginTop:8}},"Last updated by "+r.by+" \u00B7 "+r.at):null));}
+      r.by?e("div",{style:{fontSize:11,color:"#94a3b8",textAlign:"center",marginTop:8}},"Last updated by "+r.by+" \u00B7 "+r.at):null));
+}
 
 function AddModal(p){
   var ns=R.useState("");var name=ns[0];var sn=ns[1];
@@ -439,14 +486,21 @@ function AddModal(p){
   var cs_s=R.useState("Functional");var cat=cs_s[0];var setCat=cs_s[1];
   var sv_s=R.useState("High");var sev=sv_s[0];var setSev=sv_s[1];
   var errs=R.useState("");var err=errs[0];var setErr=errs[1];
-  function save(){if(!name.trim()||!expected.trim()){setErr("Name and Expected Result are required.");return;}p.onSave({id:"CUSTOM-"+Date.now(),sys:sys,cat:cat,sev:sev,name:name.trim(),expected:expected.trim(),created_by:p.testerName,created_at:new Date().toISOString()});}
+  function save(){
+    if(!name.trim()||!expected.trim()){setErr("Name and Expected Result are required.");return;}
+    p.onSave({id:"CUSTOM-"+Date.now(),sys:sys,cat:cat,sev:sev,name:name.trim(),expected:expected.trim(),created_by:p.testerName,created_at:new Date().toISOString()});
+  }
   var inp={width:"100%",border:"1px solid #e2e8f0",borderRadius:7,padding:"9px 11px",fontSize:13,color:"#1e293b",marginBottom:10,display:"block",background:"#fff"};
   var lbl={fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:4,display:"block"};
   return e("div",{className:"overlay",onClick:function(x){if(x.target===x.currentTarget)p.onClose();}},
     e("div",{className:"modal"},
-      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}},e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},"+ Add Custom Test Case"),e("button",{onClick:p.onClose,style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94a3b8"}},"\u00D7")),
-      e("label",{style:lbl},"Test Name"),e("input",{value:name,onChange:function(x){sn(x.target.value);},placeholder:"e.g. Verify price override syncs to KDS",style:inp}),
-      e("label",{style:lbl},"Expected Result"),e("textarea",{value:expected,onChange:function(x){se(x.target.value);},placeholder:"What should happen when this test passes?",style:Object.assign({},inp,{minHeight:70,resize:"vertical"})}),
+      e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}},
+        e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},"+ Add Custom Test Case"),
+        e("button",{onClick:p.onClose,style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94a3b8"}},"\u00D7")),
+      e("label",{style:lbl},"Test Name"),
+      e("input",{value:name,onChange:function(x){sn(x.target.value);},placeholder:"e.g. Verify price override syncs to KDS",style:inp}),
+      e("label",{style:lbl},"Expected Result"),
+      e("textarea",{value:expected,onChange:function(x){se(x.target.value);},placeholder:"What should happen when this test passes?",style:Object.assign({},inp,{minHeight:70,resize:"vertical"})}),
       e("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:10}},
         e("div",null,e("label",{style:lbl},"System"),e("select",{value:sys,onChange:function(x){setSys(x.target.value);},style:Object.assign({},inp,{marginBottom:0})},["POS","KDS","Menu","Stripe","Backend","Custom"].map(function(o){return e("option",{key:o},o);}))),
         e("div",null,e("label",{style:lbl},"Category"),e("input",{value:cat,onChange:function(x){setCat(x.target.value);},placeholder:"Functional",style:Object.assign({},inp,{marginBottom:0})})),
@@ -454,7 +508,8 @@ function AddModal(p){
       err?e("div",{style:{color:"#991b1b",fontSize:12,marginBottom:10,background:"#fee2e2",borderRadius:6,padding:"8px 12px"}},err):null,
       e("div",{style:{display:"flex",gap:8}},
         e("button",{onClick:p.onClose,style:{flex:1,background:"#f1f5f9",color:"#64748b",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}},"Cancel"),
-        e("button",{onClick:save,style:{flex:2,background:"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}},"Save \u2013 Visible to All Testers"))));}
+        e("button",{onClick:save,style:{flex:2,background:"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}},"Save \u2013 Visible to All Testers"))));
+}
 
 D.createRoot(document.getElementById("root")).render(e(App,null));
 })();
