@@ -1,0 +1,691 @@
+import { useState, useEffect, useRef } from "react";
+
+const SYSCOLORS = {
+  POS:    { bg:"#dbeafe", color:"#1e40af", border:"#93c5fd", bar:"#3b82f6" },
+  KDS:    { bg:"#dcfce7", color:"#166534", border:"#86efac", bar:"#22c55e" },
+  Menu:   { bg:"#fef3c7", color:"#92400e", border:"#fcd34d", bar:"#eab308" },
+  Stripe: { bg:"#f3e8ff", color:"#6b21a8", border:"#c4b5fd", bar:"#a855f7" },
+};
+const STATCFG = {
+  Untested: { bg:"#f3f4f6", color:"#6b7280", border:"#d1d5db" },
+  Pass:     { bg:"#dcfce7", color:"#166534", border:"#4ade80" },
+  Fail:     { bg:"#fee2e2", color:"#991b1b", border:"#f87171" },
+  Blocked:  { bg:"#fef3c7", color:"#92400e", border:"#fcd34d" },
+};
+const SEVCFG = {
+  Critical: { bg:"#fee2e2", color:"#991b1b", border:"#fca5a5" },
+  High:     { bg:"#fff7ed", color:"#9a3412", border:"#fed7aa" },
+  Medium:   { bg:"#fefce8", color:"#854d0e", border:"#fde68a" },
+  Low:      { bg:"#f0fdf4", color:"#166534", border:"#bbf7d0" },
+};
+const SYS_NAMES = { POS:"POS Terminal", KDS:"Kitchen Display", Menu:"Menu Designer", Stripe:"Stripe Payments" };
+const CAT_ORDER = ["Functional","UI/UX","Edge Case"];
+const PRIORITY = { Pass:4, Fail:3, Blocked:2, Untested:1 };
+
+const TESTS = [
+  {id:"POS-F01",sys:"POS",cat:"Functional",sev:"Critical",name:"Open a new order",expected:"New order created with unique order number and timestamp. Item panel is empty and ready."},
+  {id:"POS-F02",sys:"POS",cat:"Functional",sev:"Critical",name:"Add a single item to order",expected:"Item appears on ticket with correct name, qty 1, and price. Subtotal updates."},
+  {id:"POS-F03",sys:"POS",cat:"Functional",sev:"Critical",name:"Add items across multiple categories",expected:"All items from different categories appear on ticket. Subtotal equals sum of all prices."},
+  {id:"POS-F04",sys:"POS",cat:"Functional",sev:"High",name:"Increase item quantity",expected:"Quantity updates, line total equals unit price times qty, subtotal recalculates correctly."},
+  {id:"POS-F05",sys:"POS",cat:"Functional",sev:"High",name:"Decrease item quantity",expected:"Quantity decreases, line total and subtotal recalculate correctly."},
+  {id:"POS-F06",sys:"POS",cat:"Functional",sev:"Critical",name:"Remove item from order",expected:"Item removed from ticket. Subtotal recalculates to remaining items only."},
+  {id:"POS-F07",sys:"POS",cat:"Functional",sev:"Critical",name:"Apply single-choice modifier",expected:"Modifier saved on ticket and sent to KDS correctly."},
+  {id:"POS-F08",sys:"POS",cat:"Functional",sev:"High",name:"Apply multiple modifiers to one item",expected:"All modifiers shown on ticket and KDS. Price add-ons calculate correctly."},
+  {id:"POS-F09",sys:"POS",cat:"Functional",sev:"Critical",name:"Required modifier cannot be skipped",expected:"System blocks item from being added without required modifier selection."},
+  {id:"POS-F10",sys:"POS",cat:"Functional",sev:"High",name:"Add free-text special instruction",expected:"Special instruction visible on ticket and KDS beneath the item."},
+  {id:"POS-F11",sys:"POS",cat:"Functional",sev:"Medium",name:"Apply percentage discount to order",expected:"Discount line appears, subtotal reduces, tax recalculates on discounted subtotal."},
+  {id:"POS-F12",sys:"POS",cat:"Functional",sev:"Medium",name:"Apply flat dollar discount",expected:"Flat discount applied correctly. Subtotal and totals update."},
+  {id:"POS-F13",sys:"POS",cat:"Functional",sev:"High",name:"Apply item-level discount",expected:"Only the selected item is discounted. Other items remain at full price."},
+  {id:"POS-F14",sys:"POS",cat:"Functional",sev:"High",name:"Split order by seat",expected:"Items grouped by seat. Each seat total is accurate and can be paid independently."},
+  {id:"POS-F15",sys:"POS",cat:"Functional",sev:"High",name:"Hold and fire order by course",expected:"Course 1 fires to KDS immediately. Course 2 only fires after manual trigger."},
+  {id:"POS-F16",sys:"POS",cat:"Functional",sev:"Critical",name:"Void an entire open order",expected:"Order removed completely. No Stripe charge. Order does not appear on KDS."},
+  {id:"POS-F17",sys:"POS",cat:"Functional",sev:"High",name:"Void a single item with reason",expected:"Item voided with reason logged. KDS notified. Subtotal updated."},
+  {id:"POS-F18",sys:"POS",cat:"Functional",sev:"Critical",name:"Tax calculates at correct rate",expected:"Tax equals subtotal times configured rate. Grand total is accurate."},
+  {id:"POS-F19",sys:"POS",cat:"Functional",sev:"High",name:"Print receipt",expected:"Receipt prints with all items, modifiers, subtotal, tax, total, and timestamp."},
+  {id:"POS-F20",sys:"POS",cat:"Functional",sev:"Medium",name:"Email receipt to customer",expected:"Email arrives within 60 seconds with itemized receipt and business name."},
+  {id:"POS-F21",sys:"POS",cat:"Functional",sev:"Critical",name:"Full refund on completed order",expected:"Full refund processed. Order marked Refunded. Stripe dashboard shows reversal."},
+  {id:"POS-F22",sys:"POS",cat:"Functional",sev:"High",name:"Partial refund on completed order",expected:"Only selected item refunded. Remaining balance intact. Stripe shows partial refund."},
+  {id:"POS-F23",sys:"POS",cat:"Functional",sev:"Medium",name:"Open cash drawer",expected:"Drawer opens on command. Action logged with timestamp and staff name."},
+  {id:"POS-F24",sys:"POS",cat:"Functional",sev:"Medium",name:"Comp order with manager override",expected:"Order total $0. No Stripe charge. Comp reason saved in records."},
+  {id:"POS-U01",sys:"POS",cat:"UI/UX",sev:"High",name:"Menu grid loads under 2 seconds",expected:"All 3 load tests complete in under 2 seconds. No blank tiles after 2s."},
+  {id:"POS-U02",sys:"POS",cat:"UI/UX",sev:"Medium",name:"Item images consistent and not distorted",expected:"All images display at uniform size. No distortion or broken images."},
+  {id:"POS-U03",sys:"POS",cat:"UI/UX",sev:"High",name:"Ticket scrolls smoothly on large orders",expected:"Scroll is smooth with 20 plus items. Total always visible or pinned."},
+  {id:"POS-U04",sys:"POS",cat:"UI/UX",sev:"High",name:"Touch targets adequately sized on tablet",expected:"No inadvertent taps. All interactive elements minimum 44x44pt. No overlap."},
+  {id:"POS-U05",sys:"POS",cat:"UI/UX",sev:"Medium",name:"Error messages are clear and actionable",expected:"Each error clearly states what went wrong and what to do. No raw error codes."},
+  {id:"POS-U06",sys:"POS",cat:"UI/UX",sev:"Medium",name:"Active order clearly distinguished",expected:"Active order has clear visual indicator. Switching orders is instant and accurate."},
+  {id:"POS-E01",sys:"POS",cat:"Edge Case",sev:"Critical",name:"Double-tap submit creates only one order",expected:"Only 1 order created and 1 charge attempted regardless of double-tap speed."},
+  {id:"POS-E02",sys:"POS",cat:"Edge Case",sev:"Critical",name:"Network drops mid-order before payment",expected:"Clear offline warning shown. Order data not lost. Submits when network returns."},
+  {id:"POS-E03",sys:"POS",cat:"Edge Case",sev:"High",name:"Zero dollar total completes without charge",expected:"$0 order closes without triggering Stripe. Order status Complete."},
+  {id:"POS-E04",sys:"POS",cat:"Edge Case",sev:"Medium",name:"Very long item name renders correctly",expected:"Long name wraps cleanly on ticket and receipt. No layout breakage."},
+  {id:"POS-E05",sys:"POS",cat:"Edge Case",sev:"High",name:"50-item order handles without crash",expected:"System handles 50-item order without crashing or miscalculating total."},
+  {id:"POS-E06",sys:"POS",cat:"Edge Case",sev:"Medium",name:"Session timeout preserves order state",expected:"Screen locks after idle. PIN restores session. Active order intact."},
+  {id:"KDS-F01",sys:"KDS",cat:"Functional",sev:"Critical",name:"New order appears within 3 seconds",expected:"Order card appears on KDS in under 3 seconds with all items and modifiers."},
+  {id:"KDS-F02",sys:"KDS",cat:"Functional",sev:"Critical",name:"Items route to correct station",expected:"Each station KDS shows only its assigned items. No cross-contamination."},
+  {id:"KDS-F03",sys:"KDS",cat:"Functional",sev:"Critical",name:"Mark single item as ready",expected:"Item marked done visually. Other items on the order remain unchanged."},
+  {id:"KDS-F04",sys:"KDS",cat:"Functional",sev:"Critical",name:"Complete and bump entire order",expected:"Order removed from KDS. POS ticket status updates to Ready or Complete automatically."},
+  {id:"KDS-F05",sys:"KDS",cat:"Functional",sev:"High",name:"Recall last completed order",expected:"Recalled order shows in full and can be re-bumped. Recall event is logged."},
+  {id:"KDS-F06",sys:"KDS",cat:"Functional",sev:"High",name:"Modifier notes clearly visible",expected:"Each modifier on its own line. Special instructions in distinct style."},
+  {id:"KDS-F07",sys:"KDS",cat:"Functional",sev:"High",name:"Rush order flagged prominently",expected:"Rush orders have prominent visual flag. Identifiable at a glance."},
+  {id:"KDS-F08",sys:"KDS",cat:"Functional",sev:"Medium",name:"Order age timer counts up with color",expected:"Timer increments accurately. Color changes at configured thresholds."},
+  {id:"KDS-F09",sys:"KDS",cat:"Functional",sev:"High",name:"Add-on item updates existing KDS card",expected:"Late-added item appears on existing card marked as a late addition."},
+  {id:"KDS-F10",sys:"KDS",cat:"Functional",sev:"High",name:"Voided item shows on KDS",expected:"VOID indicator is prominent. Kitchen cannot accidentally prepare voided item."},
+  {id:"KDS-U01",sys:"KDS",cat:"UI/UX",sev:"High",name:"Text legible from 6 feet",expected:"Item names, modifiers, order numbers all readable from 6ft without squinting."},
+  {id:"KDS-U02",sys:"KDS",cat:"UI/UX",sev:"High",name:"8 simultaneous orders lay out cleanly",expected:"8 orders in clean grid. No overlapping. Scroll or pagination present if needed."},
+  {id:"KDS-U03",sys:"KDS",cat:"UI/UX",sev:"Medium",name:"Bump cannot be triggered accidentally",expected:"Bump requires deliberate gesture. No unintentional order completion during test."},
+  {id:"KDS-E01",sys:"KDS",cat:"Edge Case",sev:"Critical",name:"KDS retains orders when POS disconnects",expected:"KDS operates independently. Orders persist. Status syncs on reconnect."},
+  {id:"KDS-E02",sys:"KDS",cat:"Edge Case",sev:"Medium",name:"20 plus item order displays fully",expected:"All 20 items visible via scroll. None hidden. Bump works after completion."},
+  {id:"KDS-E03",sys:"KDS",cat:"Edge Case",sev:"High",name:"KDS reconnects after power cycle",expected:"On reconnect, all pending orders load. No missed or duplicated cards."},
+  {id:"MNU-F01",sys:"Menu",cat:"Functional",sev:"Critical",name:"Create a new menu category",expected:"New category visible in Menu Designer and on POS within 30 seconds."},
+  {id:"MNU-F02",sys:"Menu",cat:"Functional",sev:"Critical",name:"Create item with full details",expected:"Item on POS with correct name, price, image, and description."},
+  {id:"MNU-F03",sys:"Menu",cat:"Functional",sev:"Critical",name:"Edit existing item price",expected:"POS reflects updated price within 30 seconds. Old price gone."},
+  {id:"MNU-F04",sys:"Menu",cat:"Functional",sev:"High",name:"Edit item name",expected:"Updated name on POS. Old name no longer appears anywhere."},
+  {id:"MNU-F05",sys:"Menu",cat:"Functional",sev:"High",name:"Deactivate and reactivate item",expected:"Inactive item hidden on POS. Reactivation restores it within 30 seconds."},
+  {id:"MNU-F06",sys:"Menu",cat:"Functional",sev:"Critical",name:"Create single-select modifier group",expected:"Modifier prompt appears on POS. Single selection enforced. Shows on ticket."},
+  {id:"MNU-F07",sys:"Menu",cat:"Functional",sev:"High",name:"Multi-select modifier with price add-ons",expected:"Multi-select works. Price additions calculate correctly. All show on ticket."},
+  {id:"MNU-F08",sys:"Menu",cat:"Functional",sev:"High",name:"Required vs optional modifier enforcement",expected:"Required cannot be skipped. Optional can be skipped. Both verified."},
+  {id:"MNU-F09",sys:"Menu",cat:"Functional",sev:"Medium",name:"Reorder categories via drag-and-drop",expected:"Category order on POS matches order set in Menu Designer."},
+  {id:"MNU-F10",sys:"Menu",cat:"Functional",sev:"Medium",name:"Reorder items within a category",expected:"Item display order on POS reflects Menu Designer order."},
+  {id:"MNU-F11",sys:"Menu",cat:"Functional",sev:"Medium",name:"Upload and replace item image",expected:"New image replaces old on POS. No caching issue showing old image."},
+  {id:"MNU-F12",sys:"Menu",cat:"Functional",sev:"High",name:"Set item tax category",expected:"Each item tax category calculates independently at correct rate at checkout."},
+  {id:"MNU-F13",sys:"Menu",cat:"Functional",sev:"High",name:"Batch publish all pending changes",expected:"All changes go live on POS simultaneously. No partial state visible."},
+  {id:"MNU-F14",sys:"Menu",cat:"Functional",sev:"Medium",name:"Delete a menu item",expected:"Deleted item removed from POS immediately. Not visible in any category."},
+  {id:"MNU-U01",sys:"Menu",cat:"UI/UX",sev:"High",name:"Unsaved changes warning on navigation",expected:"Warning appears when navigating away. Leave discards, Stay preserves changes."},
+  {id:"MNU-U02",sys:"Menu",cat:"UI/UX",sev:"Medium",name:"Image preview before saving",expected:"Accurate image preview renders immediately after file selection."},
+  {id:"MNU-U03",sys:"Menu",cat:"UI/UX",sev:"Medium",name:"Drag-and-drop is smooth and accurate",expected:"Drag smooth, drop zones highlight, drops land accurately, no lag."},
+  {id:"MNU-U04",sys:"Menu",cat:"UI/UX",sev:"Low",name:"Search filters items correctly",expected:"Real-time filtering works. No-results state has helpful message."},
+  {id:"MNU-E01",sys:"Menu",cat:"Edge Case",sev:"High",name:"Save item with blank price is blocked",expected:"Validation error displayed. Save is blocked until price is entered."},
+  {id:"MNU-E02",sys:"Menu",cat:"Edge Case",sev:"Medium",name:"Zero dollar price item works correctly",expected:"$0 item allowed. Appears on ticket at $0. Subtotal unaffected."},
+  {id:"MNU-E03",sys:"Menu",cat:"Edge Case",sev:"Medium",name:"Oversized image upload handled gracefully",expected:"Clear rejection with file size limit, or silent compression. No crash."},
+  {id:"MNU-E04",sys:"Menu",cat:"Edge Case",sev:"Low",name:"Duplicate category name behavior",expected:"System warns or distinguishes duplicate names. No silent identical categories."},
+  {id:"MNU-E05",sys:"Menu",cat:"Edge Case",sev:"Low",name:"Very long names handled in all surfaces",expected:"No layout breakage in designer, POS, or receipt. Truncation is graceful."},
+  {id:"STR-F01",sys:"Stripe",cat:"Functional",sev:"Critical",name:"Stripe reader connects on launch",expected:"Reader connects within 10 seconds of app launch. Status shows Connected."},
+  {id:"STR-F02",sys:"Stripe",cat:"Functional",sev:"Critical",name:"Successful tap-to-pay transaction",expected:"Payment approved. POS confirms. Order Paid. Stripe dashboard shows charge."},
+  {id:"STR-F03",sys:"Stripe",cat:"Functional",sev:"Critical",name:"Successful chip insert transaction",expected:"Chip payment approved. POS confirms. Charge in Stripe dashboard."},
+  {id:"STR-F04",sys:"Stripe",cat:"Functional",sev:"High",name:"Successful swipe transaction",expected:"Swipe payment approved. Charge confirmed in Stripe."},
+  {id:"STR-F05",sys:"Stripe",cat:"Functional",sev:"Critical",name:"Declined card shows friendly error",expected:"Friendly error shown. Order stays open for retry. Zero charges in Stripe."},
+  {id:"STR-F06",sys:"Stripe",cat:"Functional",sev:"High",name:"Insufficient funds card declined",expected:"Decline handled gracefully. Specific reason shown if Stripe provides it."},
+  {id:"STR-F07",sys:"Stripe",cat:"Functional",sev:"High",name:"Customer adds tip on reader",expected:"Tip captured. Total equals base plus tip. Both itemized on receipt and in Stripe."},
+  {id:"STR-F08",sys:"Stripe",cat:"Functional",sev:"Medium",name:"Custom tip amount on reader",expected:"Custom tip accepted. Total charge is base plus custom tip amount."},
+  {id:"STR-F09",sys:"Stripe",cat:"Functional",sev:"High",name:"Customer skips tip",expected:"No tip charged. Total equals base amount only. Stripe shows zero tip."},
+  {id:"STR-F10",sys:"Stripe",cat:"Functional",sev:"High",name:"Split payment card and cash",expected:"Cash logged. Card charged for remainder only. Order marked fully paid."},
+  {id:"STR-F11",sys:"Stripe",cat:"Functional",sev:"High",name:"Full refund to card",expected:"Full refund processed. Stripe shows reversal. Order status Refunded."},
+  {id:"STR-F12",sys:"Stripe",cat:"Functional",sev:"High",name:"Partial refund to card",expected:"Only selected item refunded. Remaining balance intact in Stripe."},
+  {id:"STR-F13",sys:"Stripe",cat:"Functional",sev:"Medium",name:"Stripe transaction metadata is correct",expected:"Stripe charge has order ID, staff, terminal ID. Description is human-readable."},
+  {id:"STR-F14",sys:"Stripe",cat:"Functional",sev:"Medium",name:"End-of-day report matches Stripe totals",expected:"POS report total equals Stripe net total. Refunds subtracted correctly in both."},
+  {id:"STR-U01",sys:"Stripe",cat:"UI/UX",sev:"High",name:"Payment flow under 3 staff taps",expected:"Staff-side payment flow requires 3 taps or fewer excluding customer tip selection."},
+  {id:"STR-U02",sys:"Stripe",cat:"UI/UX",sev:"High",name:"Payment feedback is immediate",expected:"Success and decline screens appear within 1 second of reader response."},
+  {id:"STR-U03",sys:"Stripe",cat:"UI/UX",sev:"Medium",name:"Reader status visible on main screen",expected:"Reader status visible on POS home. Updates in real-time on connect and disconnect."},
+  {id:"STR-E01",sys:"Stripe",cat:"Edge Case",sev:"Critical",name:"Reader disconnects during payment",expected:"No duplicate charge. Order stays open. Staff can retry once reader reconnects."},
+  {id:"STR-E02",sys:"Stripe",cat:"Edge Case",sev:"High",name:"Network drops during payment",expected:"Graceful failure or queue. No silent double-charge. Status clearly communicated."},
+  {id:"STR-E03",sys:"Stripe",cat:"Edge Case",sev:"High",name:"Large transaction over 500 dollars",expected:"No POS-side cap. Full amount processed and visible in Stripe."},
+  {id:"STR-E04",sys:"Stripe",cat:"Edge Case",sev:"Medium",name:"Refund over original charge blocked",expected:"System blocks over-refund. Error shows maximum refundable amount."},
+  {id:"STR-E05",sys:"Stripe",cat:"Edge Case",sev:"Medium",name:"Double refund on same order blocked",expected:"Second refund blocked. Message: order already fully refunded."},
+];
+
+function initResults() {
+  var r = {};
+  TESTS.forEach(function(t) { r[t.id] = { status:"Untested", notes:"", by:"", at:"" }; });
+  return r;
+}
+
+function calcStats(testArr, results) {
+  var pass=0, fail=0, blocked=0;
+  testArr.forEach(function(t) {
+    var s = (results[t.id] && results[t.id].status) || "Untested";
+    if (s==="Pass") pass++;
+    else if (s==="Fail") fail++;
+    else if (s==="Blocked") blocked++;
+  });
+  var total=testArr.length, tested=pass+fail+blocked;
+  return { total, pass, fail, blocked, tested,
+    score: total ? Math.round(pass/total*100) : 0,
+    comp:  total ? Math.round(tested/total*100) : 0 };
+}
+
+function parseCSV(text) {
+  var lines = text.trim().split("\n");
+  var headers = lines[0].split(",").map(function(h){ return h.replace(/"/g,"").trim(); });
+  return lines.slice(1).map(function(line) {
+    var vals=[], cur="", inQ=false;
+    for (var i=0;i<line.length;i++) {
+      var ch=line[i];
+      if (ch==='"') inQ=!inQ;
+      else if (ch==="," && !inQ) { vals.push(cur.trim()); cur=""; }
+      else cur+=ch;
+    }
+    vals.push(cur.trim());
+    var obj={};
+    headers.forEach(function(h,i){ obj[h]=vals[i]||""; });
+    return obj;
+  });
+}
+
+function SevBadge({ sev }) {
+  var c = SEVCFG[sev]||SEVCFG.Low;
+  return <span style={{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"1px 7px",fontSize:10,fontWeight:700}}>{sev}</span>;
+}
+function SysBadge({ sys }) {
+  var c = SYSCOLORS[sys]||SYSCOLORS.POS;
+  return <span style={{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"2px 8px",fontSize:11,fontWeight:700}}>{sys}</span>;
+}
+function StatBadge({ status }) {
+  var c = STATCFG[status]||STATCFG.Untested;
+  return <span style={{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:20,padding:"2px 9px",fontSize:10,fontWeight:700}}>{status}</span>;
+}
+
+// ── Name gate screen ──
+function NameGate({ onEnter }) {
+  const [name, setName] = useState("");
+  return (
+    <div style={{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:"#1e293b",borderRadius:16,padding:40,maxWidth:400,width:"100%",textAlign:"center",boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+        <div style={{fontSize:40,marginBottom:12}}>🧪</div>
+        <div style={{fontWeight:800,fontSize:22,color:"#fff",marginBottom:6}}>POS QA Tracker</div>
+        <div style={{fontSize:13,color:"#64748b",marginBottom:28}}>Stage 1 · {TESTS.length} test cases</div>
+        <div style={{textAlign:"left",marginBottom:8}}>
+          <label style={{fontSize:12,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:1}}>Your Name</label>
+        </div>
+        <input
+          value={name}
+          onChange={function(e){ setName(e.target.value); }}
+          onKeyDown={function(e){ if(e.key==="Enter" && name.trim()) onEnter(name.trim()); }}
+          placeholder="e.g. Jordan"
+          autoFocus
+          style={{width:"100%",background:"#0f172a",border:"2px solid #334155",borderRadius:8,padding:"12px 14px",fontSize:15,color:"#fff",marginBottom:16,outline:"none"}}
+        />
+        <button
+          onClick={function(){ if(name.trim()) onEnter(name.trim()); }}
+          disabled={!name.trim()}
+          style={{width:"100%",background:name.trim()?"#3b82f6":"#334155",color:name.trim()?"#fff":"#64748b",border:"none",borderRadius:8,padding:"12px",fontSize:14,fontWeight:700,cursor:name.trim()?"pointer":"not-allowed",transition:"background .2s"}}>
+          Start Testing →
+        </button>
+        <div style={{fontSize:11,color:"#475569",marginTop:16}}>Your name will be recorded with each result you submit.</div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [tester, setTester] = useState("");
+  const [results, setResults] = useState(initResults);
+  const [tab, setTab] = useState("tracker");
+  const [view, setView] = useState("board");
+  const [fSys, setFSys] = useState("All");
+  const [fStatus, setFStatus] = useState("All");
+  const [fSev, setFSev] = useState("All");
+  const [modal, setModal] = useState(null);
+  const [copied, setCopied] = useState(false);
+
+  // Load saved results from localStorage
+  useEffect(function() {
+    try {
+      var s = localStorage.getItem("posqa_v4");
+      if (s) setResults(JSON.parse(s));
+      var n = localStorage.getItem("posqa_v4_name");
+      if (n) setTester(n);
+    } catch(e) {}
+  }, []);
+
+  // Save results on change
+  useEffect(function() {
+    try { localStorage.setItem("posqa_v4", JSON.stringify(results)); } catch(e) {}
+  }, [results]);
+
+  function handleEnter(name) {
+    setTester(name);
+    try { localStorage.setItem("posqa_v4_name", name); } catch(e) {}
+  }
+
+  function updateResult(id, field, val) {
+    setResults(function(prev) {
+      var next = Object.assign({}, prev);
+      next[id] = Object.assign({}, prev[id], { [field]:val, by:tester, at:new Date().toLocaleString() });
+      return next;
+    });
+  }
+
+  function exportCSV() {
+    var rows = [["ID","System","Category","Severity","Test Name","Expected Result","Status","Notes","Updated By","Updated At"]];
+    TESTS.forEach(function(t) {
+      var r = results[t.id]||{};
+      rows.push([t.id,t.sys,t.cat,t.sev,'"'+t.name+'"','"'+t.expected+'"',r.status||"Untested",'"'+((r.notes||"").replace(/"/g,"'"))+'"',r.by||"",r.at||""]);
+    });
+    var a = document.createElement("a");
+    a.href = "data:text/csv;charset=utf-8,"+encodeURIComponent(rows.map(function(r){return r.join(",");}).join("\n"));
+    a.download = "POS_QA_"+tester+"_"+new Date().toISOString().slice(0,10)+".csv";
+    a.click();
+  }
+
+  // Generate the embed-safe HTML string and copy to clipboard
+  function copyEmbedHTML() {
+    var html = generateEmbedHTML(results, tester);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(html).then(function() {
+        setCopied(true);
+        setTimeout(function(){ setCopied(false); }, 3000);
+      });
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = html;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(function(){ setCopied(false); }, 3000);
+    }
+  }
+
+  if (!tester) return <NameGate onEnter={handleEnter} />;
+
+  var filtered = TESTS.filter(function(t) {
+    if (fSys!=="All" && t.sys!==fSys) return false;
+    if (fStatus!=="All" && ((results[t.id]&&results[t.id].status)||"Untested")!==fStatus) return false;
+    if (fSev!=="All" && t.sev!==fSev) return false;
+    return true;
+  });
+
+  var overall = calcStats(TESTS, results);
+  var scoreColor = overall.score>=95?"#4ade80":overall.score>=80?"#facc15":"#f87171";
+  var hBtn = {border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700};
+
+  return (
+    <div style={{fontFamily:"system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh",color:"#1e293b"}}>
+      {/* Header */}
+      <div style={{background:"#0f172a",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div>
+          <div style={{fontWeight:800,fontSize:16,color:"#fff"}}>🧪 POS QA Tracker — Stage 1</div>
+          <div style={{fontSize:11,color:"#64748b",marginTop:1}}>
+            Testing as <span style={{color:"#4ade80",fontWeight:700}}>{tester}</span>
+            <button onClick={function(){ setTester(""); }} style={{background:"none",border:"none",color:"#475569",cursor:"pointer",fontSize:11,marginLeft:8,textDecoration:"underline"}}>change</button>
+          </div>
+        </div>
+        <div style={{display:"flex",gap:7,flexWrap:"wrap"}}>
+          <button style={Object.assign({},hBtn,{background:tab==="tracker"?"#3b82f6":"#334155",color:"#e2e8f0"})} onClick={function(){setTab("tracker");}}>📋 Tracker</button>
+          <button style={Object.assign({},hBtn,{background:tab==="consolidator"?"#3b82f6":"#334155",color:"#e2e8f0"})} onClick={function(){setTab("consolidator");}}>🔀 Consolidator</button>
+          <button style={Object.assign({},hBtn,{background:"#16a34a",color:"#fff"})} onClick={exportCSV}>⬇ Export My CSV</button>
+          <button style={Object.assign({},hBtn,{background:"#7c3aed",color:"#fff"})} onClick={downloadEmbedHTML}>
+            💾 Download SharePoint File
+          </button>
+        </div>
+      </div>
+
+      {tab==="tracker" ? (
+        <>
+          {/* Score bar */}
+          <div style={{background:"#1e293b",borderTop:"1px solid #0f172a",padding:"13px 20px",display:"flex",gap:18,flexWrap:"wrap",alignItems:"center"}}>
+            <div style={{flex:1,minWidth:180}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginBottom:4}}><span>Completion</span><span>{overall.comp}%</span></div>
+              <div style={{background:"#334155",borderRadius:99,height:8}}>
+                <div style={{background:"#3b82f6",width:overall.comp+"%",height:"100%",borderRadius:99,transition:"width .4s"}}/>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginTop:5}}>
+                <span>Pass Score</span>
+                <span style={{fontWeight:800,fontSize:14,color:scoreColor}}>{overall.score}% {overall.score>=95?"🟢":overall.score>=80?"🟡":"🔴"}</span>
+              </div>
+            </div>
+            {[["Total",overall.total,"#fff"],["Pass",overall.pass,"#4ade80"],["Fail",overall.fail,"#f87171"],["Blocked",overall.blocked,"#facc15"],["Untested",overall.total-overall.tested,"#64748b"]].map(function(it){
+              return <div key={it[0]} style={{textAlign:"center"}}><div style={{color:it[2],fontWeight:800,fontSize:19}}>{it[1]}</div><div style={{fontSize:10,color:"#64748b",textTransform:"uppercase"}}>{it[0]}</div></div>;
+            })}
+          </div>
+          {/* System bars */}
+          <div style={{background:"#1e293b",borderTop:"1px solid #0f172a",padding:"8px 20px",display:"flex",gap:12,flexWrap:"wrap"}}>
+            {["POS","KDS","Menu","Stripe"].map(function(sys){
+              var c=SYSCOLORS[sys]; var s=calcStats(TESTS.filter(function(t){return t.sys===sys;}),results);
+              return <div key={sys} style={{display:"flex",alignItems:"center",gap:7,minWidth:145}}>
+                <SysBadge sys={sys}/>
+                <div style={{flex:1,background:"#334155",borderRadius:99,height:5,minWidth:60}}>
+                  <div style={{background:c.bar,width:s.score+"%",height:"100%",borderRadius:99}}/>
+                </div>
+                <span style={{color:"#94a3b8",fontSize:11}}>{s.pass}/{s.total}</span>
+              </div>;
+            })}
+          </div>
+          {/* Filters */}
+          <div style={{background:"#fff",borderBottom:"1px solid #e2e8f0",padding:"9px 20px",display:"flex",gap:9,flexWrap:"wrap",alignItems:"center"}}>
+            <span style={{fontSize:12,color:"#64748b",fontWeight:700}}>Filter:</span>
+            {[[["All","POS","KDS","Menu","Stripe"],fSys,setFSys],[["All","Untested","Pass","Fail","Blocked"],fStatus,setFStatus],[["All","Critical","High","Medium","Low"],fSev,setFSev]].map(function(item,i){
+              return <select key={i} value={item[1]} onChange={function(e){item[2](e.target.value);}} style={{border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 9px",fontSize:12,color:"#1e293b",background:"#fff"}}>
+                {item[0].map(function(o){return <option key={o}>{o}</option>;})}
+              </select>;
+            })}
+            <div style={{display:"flex",background:"#f1f5f9",borderRadius:6,padding:2,gap:2,marginLeft:"auto"}}>
+              {["board","table"].map(function(v){
+                return <button key={v} onClick={function(){setView(v);}} style={{background:view===v?"#fff":"transparent",color:view===v?"#1e293b":"#94a3b8",border:"none",borderRadius:5,padding:"4px 12px",cursor:"pointer",fontSize:12,fontWeight:600,boxShadow:view===v?"0 1px 3px rgba(0,0,0,.1)":"none"}}>
+                  {v==="board"?"🗂 Board":"📋 Table"}
+                </button>;
+              })}
+            </div>
+            <span style={{fontSize:11,color:"#94a3b8"}}>{filtered.length} shown</span>
+          </div>
+          <div style={{padding:18}}>
+            {view==="board"
+              ? <BoardView tests={filtered} results={results} onOpen={setModal}/>
+              : <TableView tests={filtered} results={results} onUpdate={updateResult}/>}
+          </div>
+        </>
+      ) : (
+        <ConsolidatorView/>
+      )}
+
+      {modal && <ModalView id={modal} results={results} tester={tester} onUpdate={updateResult} onClose={function(){setModal(null);}}/>}
+    </div>
+  );
+}
+
+function BoardView({ tests, results, onOpen }) {
+  var grouped = {};
+  tests.forEach(function(t) {
+    if (!grouped[t.sys]) grouped[t.sys]={};
+    if (!grouped[t.sys][t.cat]) grouped[t.sys][t.cat]=[];
+    grouped[t.sys][t.cat].push(t);
+  });
+  return (
+    <div>
+      {["POS","KDS","Menu","Stripe"].filter(function(s){return grouped[s];}).map(function(sys){
+        var c=SYSCOLORS[sys]; var ss=calcStats(TESTS.filter(function(t){return t.sys===sys;}),results);
+        return <div key={sys} style={{marginBottom:26}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
+            <span style={{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:6,padding:"4px 13px",fontWeight:800,fontSize:13}}>{SYS_NAMES[sys]}</span>
+            <span style={{fontSize:12,color:"#94a3b8"}}>{ss.pass}/{ss.total} passing</span>
+          </div>
+          {CAT_ORDER.filter(function(cat){return grouped[sys][cat];}).map(function(cat){
+            return <div key={cat}>
+              <div style={{fontSize:11,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:1,marginBottom:7,marginTop:11}}>{cat}</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))",gap:9}}>
+                {grouped[sys][cat].map(function(t){
+                  var r=results[t.id]||{}; var st=r.status||"Untested"; var sc=STATCFG[st];
+                  var bc=st==="Pass"?"#86efac":st==="Fail"?"#fca5a5":st==="Blocked"?"#fcd34d":"#e2e8f0";
+                  return <div key={t.id} onClick={function(){onOpen(t.id);}}
+                    style={{background:"#fff",border:"2px solid "+bc,borderRadius:8,padding:13,cursor:"pointer"}}
+                    onMouseEnter={function(e){e.currentTarget.style.boxShadow="0 4px 14px rgba(0,0,0,.09)";}}
+                    onMouseLeave={function(e){e.currentTarget.style.boxShadow="none";}}>
+                    <div style={{fontFamily:"monospace",fontSize:10,color:"#94a3b8"}}>{t.id}</div>
+                    <div style={{fontWeight:700,fontSize:13,color:"#0f172a",margin:"3px 0"}}>{t.name}</div>
+                    <div style={{fontSize:11,color:"#64748b",lineHeight:1.45,marginBottom:8}}>{t.expected.length>85?t.expected.substring(0,85)+"...":t.expected}</div>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                      <SevBadge sev={t.sev}/>
+                      <StatBadge status={st}/>
+                    </div>
+                    {r.notes?<div style={{marginTop:7,fontSize:10,color:"#64748b",background:"#f8fafc",borderRadius:4,padding:"4px 7px",borderLeft:"3px solid #cbd5e1"}}>{r.notes.substring(0,80)}</div>:null}
+                    {r.by?<div style={{fontSize:10,color:"#94a3b8",marginTop:5}}>Updated by {r.by} · {r.at}</div>:null}
+                  </div>;
+                })}
+              </div>
+            </div>;
+          })}
+        </div>;
+      })}
+    </div>
+  );
+}
+
+function TableView({ tests, results, onUpdate }) {
+  return (
+    <div style={{overflowX:"auto"}}>
+      <table style={{width:"100%",borderCollapse:"collapse",background:"#fff",borderRadius:8,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,.08)"}}>
+        <thead><tr style={{background:"#f8fafc"}}>
+          {["ID","System","Sev","Test Name","Expected","Status","Notes","By"].map(function(h){
+            return <th key={h} style={{padding:"9px 11px",textAlign:"left",fontSize:11,fontWeight:700,color:"#64748b",borderBottom:"1px solid #e2e8f0",whiteSpace:"nowrap"}}>{h}</th>;
+          })}
+        </tr></thead>
+        <tbody>
+          {tests.map(function(t,i){
+            var r=results[t.id]||{}; var st=r.status||"Untested"; var sc=STATCFG[st];
+            return <tr key={t.id} style={{background:i%2===0?"#fff":"#fafafa"}}>
+              <td style={{padding:"7px 11px",fontFamily:"monospace",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}}>{t.id}</td>
+              <td style={{padding:"7px 11px"}}><SysBadge sys={t.sys}/></td>
+              <td style={{padding:"7px 11px"}}><SevBadge sev={t.sev}/></td>
+              <td style={{padding:"7px 11px",fontWeight:700,fontSize:12,maxWidth:175}}>{t.name}</td>
+              <td style={{padding:"7px 11px",fontSize:11,color:"#64748b",maxWidth:210}}>{t.expected}</td>
+              <td style={{padding:"7px 11px"}}>
+                <select value={st} onChange={function(e){onUpdate(t.id,"status",e.target.value);}} style={{background:sc.bg,color:sc.color,border:"1px solid "+sc.border,borderRadius:5,padding:"3px 7px",fontSize:11,fontWeight:700,cursor:"pointer"}}>
+                  {["Untested","Pass","Fail","Blocked"].map(function(s){return <option key={s}>{s}</option>;})}
+                </select>
+              </td>
+              <td style={{padding:"7px 11px"}}>
+                <input defaultValue={r.notes||""} onBlur={function(e){onUpdate(t.id,"notes",e.target.value);}} placeholder="Add note..." style={{border:"1px solid #e2e8f0",borderRadius:5,padding:"3px 7px",fontSize:11,width:"100%",minWidth:110}}/>
+              </td>
+              <td style={{padding:"7px 11px",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}}>{r.by||"—"}</td>
+            </tr>;
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ModalView({ id, results, tester, onUpdate, onClose }) {
+  var t=TESTS.find(function(x){return x.id===id;}); var r=results[id]||{}; var st=r.status||"Untested";
+  const [notes,setNotes]=useState(r.notes||"");
+  const [saved,setSaved]=useState(false);
+  var c=SYSCOLORS[t.sys];
+  function saveNotes(){onUpdate(id,"notes",notes);setSaved(true);setTimeout(function(){setSaved(false);},1800);}
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16}} onClick={function(e){if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:"#fff",borderRadius:12,padding:24,maxWidth:520,width:"100%",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}}>
+          <div>
+            <div style={{display:"flex",gap:6,marginBottom:6,flexWrap:"wrap"}}><SysBadge sys={t.sys}/><SevBadge sev={t.sev}/><span style={{fontFamily:"monospace",fontSize:11,color:"#94a3b8",alignSelf:"center"}}>{t.id}</span></div>
+            <div style={{fontWeight:800,fontSize:16,color:"#0f172a"}}>{t.name}</div>
+            <div style={{fontSize:12,color:"#94a3b8",marginTop:3}}>{t.cat}</div>
+          </div>
+          <button onClick={onClose} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94a3b8",lineHeight:1}}>✕</button>
+        </div>
+        <div style={{background:"#f0fdf4",borderRadius:8,padding:13,marginBottom:13,borderLeft:"4px solid #4ade80"}}>
+          <div style={{fontSize:10,fontWeight:700,color:"#166534",textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Expected Result</div>
+          <div style={{fontSize:13,color:"#166534",lineHeight:1.55}}>{t.expected}</div>
+        </div>
+        <div style={{marginBottom:13}}>
+          <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:7}}>Result</div>
+          <div style={{display:"flex",gap:7}}>
+            {["Untested","Pass","Fail","Blocked"].map(function(s){
+              var sc=STATCFG[s]; var active=st===s;
+              return <button key={s} onClick={function(){onUpdate(id,"status",s);}} style={{flex:1,background:active?sc.bg:"#f8fafc",color:active?sc.color:"#94a3b8",border:"2px solid "+(active?sc.border:"#e2e8f0"),borderRadius:7,padding:"8px 4px",cursor:"pointer",fontSize:11,fontWeight:700}}>{s}</button>;
+            })}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:5}}>Notes / Bug Description</div>
+          <textarea value={notes} onChange={function(e){setNotes(e.target.value);}} placeholder="Describe what happened, expected vs actual, steps to reproduce..." style={{width:"100%",border:"1px solid #e2e8f0",borderRadius:7,padding:9,fontSize:13,minHeight:75,resize:"vertical",color:"#1e293b",display:"block"}}/>
+          <button onClick={saveNotes} style={{marginTop:8,width:"100%",background:saved?"#16a34a":"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}}>{saved?"✓ Saved":"Save as "+tester}</button>
+        </div>
+        {r.by?<div style={{fontSize:11,color:"#94a3b8",textAlign:"center",marginTop:8}}>Last updated by {r.by} · {r.at}</div>:null}
+      </div>
+    </div>
+  );
+}
+
+function ConsolidatorView() {
+  const [files,setFiles]=useState({});
+  const [mergedRows,setMergedRows]=useState(null);
+  const ref=useRef(null);
+
+  useEffect(function(){
+    var vals=Object.values(files);
+    if(!vals.length){setMergedRows(null);return;}
+    var master={};
+    vals.forEach(function(csv){
+      parseCSV(csv).forEach(function(row){
+        var id=row["ID"]||row["id"]; if(!id)return;
+        var st=row["Status"]||"Untested";
+        var curPri=master[id]?(PRIORITY[master[id].status]||0):0;
+        if(!master[id]||(PRIORITY[st]||0)>curPri){
+          master[id]={status:st,notes:row["Notes"]||"",by:row["Updated By"]||"",at:row["Updated At"]||""};
+        }
+      });
+    });
+    setMergedRows(TESTS.map(function(t){
+      var m=master[t.id]||{};
+      return {id:t.id,sys:t.sys,cat:t.cat,sev:t.sev,name:t.name,expected:t.expected,status:m.status||"Untested",notes:m.notes||"",by:m.by||"",at:m.at||""};
+    }));
+  },[files]);
+
+  function handleFiles(fl){Array.from(fl).forEach(function(f){if(!f.name.endsWith(".csv"))return;var rd=new FileReader();rd.onload=function(ev){setFiles(function(p){var n=Object.assign({},p);n[f.name]=ev.target.result;return n;});};rd.readAsText(f);});}
+  function removeFile(name){setFiles(function(p){var n=Object.assign({},p);delete n[name];return n;});}
+  function exportMaster(){
+    if(!mergedRows)return;
+    var rows=[["ID","System","Category","Severity","Test Name","Expected Result","Status","Notes","Updated By","Updated At"]];
+    mergedRows.forEach(function(t){rows.push([t.id,t.sys,t.cat,t.sev,'"'+t.name+'"','"'+t.expected+'"',t.status,'"'+((t.notes||"").replace(/"/g,"'"))+'"',t.by,t.at]);});
+    var a=document.createElement("a");
+    a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(rows.map(function(r){return r.join(",");}).join("\n"));
+    a.download="POS_QA_Master_"+new Date().toISOString().slice(0,10)+".csv";a.click();
+  }
+
+  var fileNames=Object.keys(files);
+  var ms=mergedRows?(function(){var o={};mergedRows.forEach(function(r){o[r.id]={status:r.status};});return calcStats(mergedRows,o);}()):null;
+  var pct=ms?ms.score:0; var sc=pct>=95?"#166534":pct>=80?"#92400e":"#991b1b"; var sb=pct>=95?"#dcfce7":pct>=80?"#fef3c7":"#fee2e2";
+
+  return (
+    <div style={{padding:20}}>
+      <div style={{fontWeight:800,fontSize:16,color:"#0f172a",marginBottom:4}}>🔀 CSV Consolidator</div>
+      <div style={{fontSize:13,color:"#64748b",marginBottom:18}}>Drop all testers' exported CSV files here to merge into one master view.</div>
+      <div onClick={function(){ref.current&&ref.current.click();}} onDragOver={function(e){e.preventDefault();}} onDrop={function(e){e.preventDefault();handleFiles(e.dataTransfer.files);}}
+        style={{border:"2px dashed #cbd5e1",borderRadius:10,padding:32,textAlign:"center",background:"#fff",cursor:"pointer"}}>
+        <div style={{fontSize:32}}>📂</div>
+        <div style={{color:"#94a3b8",fontSize:13,marginTop:8}}>Click to select CSV files or drag and drop</div>
+        <div style={{color:"#94a3b8",fontSize:11,marginTop:4}}>Select multiple files at once</div>
+      </div>
+      <input ref={ref} type="file" accept=".csv" multiple style={{display:"none"}} onChange={function(e){handleFiles(e.target.files);}}/>
+      {fileNames.length>0&&<div style={{marginTop:12,display:"flex",flexWrap:"wrap",gap:6}}>
+        {fileNames.map(function(name){return <span key={name} style={{display:"inline-flex",alignItems:"center",gap:7,background:"#eff6ff",border:"1px solid #bfdbfe",borderRadius:20,padding:"4px 12px",fontSize:12,color:"#1e40af"}}>
+          📄 {name}<button onClick={function(){removeFile(name);}} style={{background:"none",border:"none",cursor:"pointer",color:"#94a3b8",fontSize:14,lineHeight:1,padding:0}}>×</button>
+        </span>;})}
+      </div>}
+      {mergedRows&&ms&&(
+        <div style={{background:"#fff",borderRadius:10,padding:18,marginTop:16,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}}>
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"center",marginBottom:14}}>
+            <div style={{flex:1,minWidth:200}}>
+              <div style={{fontSize:13,fontWeight:800,color:"#0f172a",marginBottom:8}}>{fileNames.length} file{fileNames.length>1?"s":""} merged</div>
+              <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+                {[["Pass",ms.pass,"#4ade80"],["Fail",ms.fail,"#f87171"],["Blocked",ms.blocked,"#facc15"],["Untested",ms.total-ms.tested,"#94a3b8"]].map(function(it){
+                  return <div key={it[0]} style={{textAlign:"center"}}><div style={{fontSize:20,fontWeight:800,color:it[2]}}>{it[1]}</div><div style={{fontSize:10,color:"#94a3b8",textTransform:"uppercase"}}>{it[0]}</div></div>;
+                })}
+              </div>
+            </div>
+            <div style={{background:sb,borderRadius:10,padding:"14px 20px",textAlign:"center",minWidth:110}}>
+              <div style={{fontSize:28,fontWeight:800,color:sc}}>{pct}%</div>
+              <div style={{fontSize:11,color:sc,fontWeight:700}}>{pct>=95?"✅ READY":"⏳ IN PROGRESS"}</div>
+            </div>
+          </div>
+          <button onClick={exportMaster} style={{background:"#16a34a",color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700,marginBottom:14}}>⬇ Export Master CSV</button>
+          <div style={{overflowX:"auto"}}>
+            <table style={{width:"100%",borderCollapse:"collapse"}}>
+              <thead><tr style={{background:"#f8fafc"}}>
+                {["ID","System","Sev","Test Name","Status","Notes","By"].map(function(h){return <th key={h} style={{padding:"8px 10px",textAlign:"left",fontSize:11,fontWeight:700,color:"#64748b",borderBottom:"2px solid #e2e8f0",whiteSpace:"nowrap"}}>{h}</th>;})}
+              </tr></thead>
+              <tbody>
+                {mergedRows.map(function(t,i){return <tr key={t.id} style={{background:i%2===0?"#fff":"#fafafa"}}>
+                  <td style={{padding:"7px 10px",fontFamily:"monospace",fontSize:10,color:"#94a3b8"}}>{t.id}</td>
+                  <td style={{padding:"7px 10px"}}><SysBadge sys={t.sys}/></td>
+                  <td style={{padding:"7px 10px"}}><SevBadge sev={t.sev}/></td>
+                  <td style={{padding:"7px 10px",fontWeight:600,maxWidth:170,fontSize:12}}>{t.name}</td>
+                  <td style={{padding:"7px 10px"}}><StatBadge status={t.status}/></td>
+                  <td style={{padding:"7px 10px",fontSize:11,color:"#64748b",maxWidth:180}}>{t.notes}</td>
+                  <td style={{padding:"7px 10px",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}}>{t.by}</td>
+                </tr>;})}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+  function downloadEmbedHTML() {
+    var html = generateEmbedHTML(results, tester);
+    var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "POS_QA_Tracker_Embed.html";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // Generates a minimal self-contained HTML string safe for SharePoint embed
+function generateEmbedHTML(results, tester) {
+  var testsJSON = JSON.stringify(TESTS);
+  var resultsJSON = JSON.stringify(results);
+  var testerStr = tester || "";
+  return [
+    '<!DOCTYPE html>',
+    '<html lang="en"><head><meta charset="UTF-8"/>',
+    '<meta name="viewport" content="width=device-width,initial-scale=1"/>',
+    '<title>POS QA Tracker</title>',
+    '<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"><\/script>',
+    '<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"><\/script>',
+    '<style>',
+    '*{box-sizing:border-box;margin:0;padding:0}',
+    'body{font-family:system-ui,sans-serif;background:#f1f5f9;color:#1e293b}',
+    'input,select,textarea,button{font-family:inherit}',
+    '.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:9px}',
+    'table{width:100%;border-collapse:collapse}',
+    'th{padding:9px 11px;text-align:left;font-size:11px;font-weight:700;color:#64748b;background:#f8fafc;border-bottom:1px solid #e2e8f0;white-space:nowrap}',
+    'td{padding:7px 11px;border-bottom:1px solid #f1f5f9;font-size:12px;vertical-align:middle}',
+    '<\/style></head><body><div id="r"></div>',
+    '<script>',
+    '(function(){',
+    'var R=React,D=ReactDOM;',
+    'var SC={POS:{bg:"#dbeafe",color:"#1e40af",border:"#93c5fd",bar:"#3b82f6"},KDS:{bg:"#dcfce7",color:"#166534",border:"#86efac",bar:"#22c55e"},Menu:{bg:"#fef3c7",color:"#92400e",border:"#fcd34d",bar:"#eab308"},Stripe:{bg:"#f3e8ff",color:"#6b21a8",border:"#c4b5fd",bar:"#a855f7"}};',
+    'var ST={Untested:{bg:"#f3f4f6",color:"#6b7280",border:"#d1d5db"},Pass:{bg:"#dcfce7",color:"#166534",border:"#4ade80"},Fail:{bg:"#fee2e2",color:"#991b1b",border:"#f87171"},Blocked:{bg:"#fef3c7",color:"#92400e",border:"#fcd34d"}};',
+    'var SV={Critical:{bg:"#fee2e2",color:"#991b1b",border:"#fca5a5"},High:{bg:"#fff7ed",color:"#9a3412",border:"#fed7aa"},Medium:{bg:"#fefce8",color:"#854d0e",border:"#fde68a"},Low:{bg:"#f0fdf4",color:"#166534",border:"#bbf7d0"}};',
+    'var SN={POS:"POS Terminal",KDS:"Kitchen Display",Menu:"Menu Designer",Stripe:"Stripe Payments"};',
+    'var CO=["Functional","UI/UX","Edge Case"];',
+    'var TESTS='+testsJSON+';',
+    'var SAVED='+resultsJSON+';',
+    'var TESTER="'+testerStr.replace(/"/g,'\\"')+'";',
+    'function cs(arr,res){var p=0,f=0,b=0;arr.forEach(function(t){var s=(res[t.id]&&res[t.id].status)||"Untested";if(s==="Pass")p++;else if(s==="Fail")f++;else if(s==="Blocked")b++;});var tot=arr.length,tested=p+f+b;return{total:tot,pass:p,fail:f,blocked:b,tested:tested,score:tot?Math.round(p/tot*100):0,comp:tot?Math.round(tested/tot*100):0};}',
+    'var e=R.createElement;',
+    'function SevB(p){var c=SV[p.sev]||SV.Low;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"1px 7px",fontSize:10,fontWeight:700}},p.sev);}',
+    'function SysB(p){var c=SC[p.sys]||SC.POS;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:4,padding:"2px 8px",fontSize:11,fontWeight:700}},p.sys);}',
+    'function StaB(p){var c=ST[p.status]||ST.Untested;return e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:20,padding:"2px 9px",fontSize:10,fontWeight:700}},p.status);}',
+    // NameGate
+    'function NG(p){var ns=R.useState("");var name=ns[0];var sn=ns[1];return e("div",{style:{minHeight:"100vh",background:"#0f172a",display:"flex",alignItems:"center",justifyContent:"center",padding:20}},e("div",{style:{background:"#1e293b",borderRadius:16,padding:40,maxWidth:400,width:"100%",textAlign:"center"}},e("div",{style:{fontSize:40}},"\\ud83e\\uddea"),e("div",{style:{fontWeight:800,fontSize:22,color:"#fff",marginBottom:6}},"POS QA Tracker"),e("div",{style:{fontSize:13,color:"#64748b",marginBottom:28}},"Stage 1 - "+TESTS.length+" test cases"),e("input",{value:name,onChange:function(v){sn(v.target.value);},onKeyDown:function(v){if(v.key==="Enter"&&name.trim())p.onEnter(name.trim());},placeholder:"Enter your name",autoFocus:true,style:{width:"100%",background:"#0f172a",border:"2px solid #334155",borderRadius:8,padding:"12px 14px",fontSize:15,color:"#fff",marginBottom:16,display:"block"}}),e("button",{onClick:function(){if(name.trim())p.onEnter(name.trim());},disabled:!name.trim(),style:{width:"100%",background:name.trim()?"#3b82f6":"#334155",color:name.trim()?"#fff":"#64748b",border:"none",borderRadius:8,padding:"12px",fontSize:14,fontWeight:700,cursor:name.trim()?"pointer":"not-allowed"}},"Start Testing \u2192")));}',
+    // Main App
+    'function App(){',
+    'var ini=function(){var r={};try{var s=localStorage.getItem("posqa_sp");if(s){var p=JSON.parse(s);TESTS.forEach(function(t){r[t.id]=p[t.id]||SAVED[t.id]||{status:"Untested",notes:"",by:"",at:""};});return r;}}catch(x){}TESTS.forEach(function(t){r[t.id]=SAVED[t.id]||{status:"Untested",notes:"",by:"",at:""};});return r;};',
+    'var rs=R.useState(ini);var res=rs[0];var sr=rs[1];',
+    'var ts=R.useState(TESTER);var tester=ts[0];var st=ts[1];',
+    'var vs=R.useState("board");var view=vs[0];var sv=vs[1];',
+    'var fs=R.useState("All");var fSys=fs[0];var sfs=fs[1];',
+    'var fss=R.useState("All");var fSt=fss[0];var sfst=fss[1];',
+    'var ms=R.useState(null);var modal=ms[0];var sm=ms[1];',
+    'R.useEffect(function(){try{localStorage.setItem("posqa_sp",JSON.stringify(res));}catch(x){};},[res]);',
+    'R.useEffect(function(){if(tester)try{localStorage.setItem("posqa_sp_name",tester);}catch(x){};},[tester]);',
+    'function upd(id,field,val){sr(function(prev){var nx=Object.assign({},prev);nx[id]=Object.assign({},prev[id],{[field]:val,by:tester,at:new Date().toLocaleString()});return nx;});}',
+    'function expCSV(){var rows=[["ID","System","Category","Severity","Test Name","Expected Result","Status","Notes","Updated By","Updated At"]];TESTS.forEach(function(t){var r=res[t.id]||{};rows.push([t.id,t.sys,t.cat,t.sev,\'"\'+t.name+\'"\',\'"\'+t.expected+\'"\',r.status||"Untested",\'"\'+((r.notes||"").replace(/"/g,"\'"))+\'"\',r.by||"",r.at||""]);});var a=document.createElement("a");a.href="data:text/csv;charset=utf-8,"+encodeURIComponent(rows.map(function(r){return r.join(",");}).join("\\n"));a.download="POS_QA_"+tester+"_"+new Date().toISOString().slice(0,10)+".csv";a.click();}',
+    'if(!tester)return e(NG,{onEnter:function(n){st(n);}});',
+    'var filtered=TESTS.filter(function(t){if(fSys!=="All"&&t.sys!==fSys)return false;if(fSt!=="All"&&((res[t.id]&&res[t.id].status)||"Untested")!==fSt)return false;return true;});',
+    'var ov=cs(TESTS,res);var scc=ov.score>=95?"#4ade80":ov.score>=80?"#facc15":"#f87171";',
+    'var hb={border:"none",borderRadius:6,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:700};',
+    'return e("div",{style:{fontFamily:"system-ui,sans-serif",background:"#f1f5f9",minHeight:"100vh"}},',
+    'e("div",{style:{background:"#0f172a",padding:"12px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}},',
+    'e("div",null,e("div",{style:{fontWeight:800,fontSize:16,color:"#fff"}},"\\ud83e\\uddea POS QA Tracker"),e("div",{style:{fontSize:11,color:"#64748b"}},"Testing as: "+e("b",null,tester))),',
+    'e("div",{style:{display:"flex",gap:7,flexWrap:"wrap"}},e("button",{style:Object.assign({},hb,{background:"#16a34a",color:"#fff"}),onClick:expCSV},"\\u2b07 Export My CSV"),e("button",{style:Object.assign({},hb,{background:"#334155",color:"#e2e8f0"}),onClick:function(){st("");}},"Change Name"))),',
+    'e("div",{style:{background:"#1e293b",padding:"13px 20px",display:"flex",gap:18,flexWrap:"wrap",alignItems:"center"}},',
+    'e("div",{style:{flex:1,minWidth:180}},e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginBottom:4}},e("span","Completion"),e("span",ov.comp+"%")),e("div",{style:{background:"#334155",borderRadius:99,height:8}},e("div",{style:{background:"#3b82f6",width:ov.comp+"%",height:"100%",borderRadius:99}})),e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginTop:5}},e("span","Pass Score"),e("span",{style:{fontWeight:800,fontSize:14,color:scc}},ov.score+"%"))),',
+    '[["Total",ov.total,"#fff"],["Pass",ov.pass,"#4ade80"],["Fail",ov.fail,"#f87171"],["Blocked",ov.blocked,"#facc15"],["Untested",ov.total-ov.tested,"#64748b"]].map(function(it){return e("div",{key:it[0],style:{textAlign:"center"}},e("div",{style:{color:it[2],fontWeight:800,fontSize:19}},it[1]),e("div",{style:{fontSize:10,color:"#64748b",textTransform:"uppercase"}},it[0]));})),',
+    'e("div",{style:{background:"#1e293b",borderTop:"1px solid #0f172a",padding:"8px 20px",display:"flex",gap:12,flexWrap:"wrap"}},',
+    '["POS","KDS","Menu","Stripe"].map(function(sys){var c=SC[sys];var s=cs(TESTS.filter(function(t){return t.sys===sys;}),res);return e("div",{key:sys,style:{display:"flex",alignItems:"center",gap:7,minWidth:140}},e(SysB,{sys:sys}),e("div",{style:{flex:1,background:"#334155",borderRadius:99,height:5,minWidth:60}},e("div",{style:{background:c.bar,width:s.score+"%",height:"100%",borderRadius:99}})),e("span",{style:{color:"#94a3b8",fontSize:11}},s.pass+"/"+s.total));})),',
+    'e("div",{style:{background:"#fff",borderBottom:"1px solid #e2e8f0",padding:"9px 20px",display:"flex",gap:9,flexWrap:"wrap",alignItems:"center"}},',
+    'e("span",{style:{fontSize:12,color:"#64748b",fontWeight:700}},"Filter:"),',
+    'e("select",{value:fSys,onChange:function(x){sfs(x.target.value);},style:{border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 9px",fontSize:12}},["All","POS","KDS","Menu","Stripe"].map(function(o){return e("option",{key:o},o);})),',
+    'e("select",{value:fSt,onChange:function(x){sfst(x.target.value);},style:{border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 9px",fontSize:12}},["All","Untested","Pass","Fail","Blocked"].map(function(o){return e("option",{key:o},o);})),',
+    'e("div",{style:{display:"flex",background:"#f1f5f9",borderRadius:6,padding:2,gap:2,marginLeft:"auto"}},["board","table"].map(function(v){return e("button",{key:v,onClick:function(){sv(v);},style:{background:view===v?"#fff":"transparent",color:view===v?"#1e293b":"#94a3b8",border:"none",borderRadius:5,padding:"4px 12px",cursor:"pointer",fontSize:12,fontWeight:600}},v==="board"?"Board":"Table");})),',
+    'e("span",{style:{fontSize:11,color:"#94a3b8"}},filtered.length+" shown")),',
+    'e("div",{style:{padding:18}},view==="board"?e(BV,{tests:filtered,results:res,onOpen:sm}):e(TV,{tests:filtered,results:res,onUpdate:upd})),',
+    'modal?e(MV,{id:modal,results:res,tester:tester,onUpdate:upd,onClose:function(){sm(null);}}):null);',
+    '}',
+    // BoardView
+    'function BV(p){var g={};p.tests.forEach(function(t){if(!g[t.sys])g[t.sys]={};if(!g[t.sys][t.cat])g[t.sys][t.cat]=[];g[t.sys][t.cat].push(t);});return e("div",null,["POS","KDS","Menu","Stripe"].filter(function(s){return g[s];}).map(function(sys){var c=SC[sys];var ss=cs(TESTS.filter(function(t){return t.sys===sys;}),p.results);return e("div",{key:sys,style:{marginBottom:26}},e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:10}},e("span",{style:{background:c.bg,color:c.color,border:"1px solid "+c.border,borderRadius:6,padding:"4px 13px",fontWeight:800,fontSize:13}},SN[sys]),e("span",{style:{fontSize:12,color:"#94a3b8"}},ss.pass+"/"+ss.total+" passing")),CO.filter(function(cat){return g[sys][cat];}).map(function(cat){return e("div",{key:cat},e("div",{style:{fontSize:11,fontWeight:700,color:"#94a3b8",textTransform:"uppercase",letterSpacing:1,marginBottom:7,marginTop:11}},cat),e("div",{className:"grid"},g[sys][cat].map(function(t){var r=p.results[t.id]||{};var st=r.status||"Untested";var sc=ST[st];var bc=st==="Pass"?"#86efac":st==="Fail"?"#fca5a5":st==="Blocked"?"#fcd34d":"#e2e8f0";return e("div",{key:t.id,onClick:function(){p.onOpen(t.id);},style:{background:"#fff",border:"2px solid "+bc,borderRadius:8,padding:13,cursor:"pointer"}},e("div",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8"}},t.id),e("div",{style:{fontWeight:700,fontSize:13,color:"#0f172a",margin:"3px 0"}},t.name),e("div",{style:{fontSize:11,color:"#64748b",lineHeight:1.45,marginBottom:8}},t.expected.length>80?t.expected.substring(0,80)+"...":t.expected),e("div",{style:{display:"flex",alignItems:"center",justifyContent:"space-between"}},e(SevB,{sev:t.sev}),e(StaB,{status:st})),r.notes?e("div",{style:{marginTop:7,fontSize:10,color:"#64748b",background:"#f8fafc",borderRadius:4,padding:"4px 7px",borderLeft:"3px solid #cbd5e1"}},r.notes.substring(0,70)):null,r.by?e("div",{style:{fontSize:10,color:"#94a3b8",marginTop:4}},"By "+r.by):null);})));}));}));}',
+    // TableView
+    'function TV(p){return e("div",{style:{overflowX:"auto"}},e("table",{style:{background:"#fff",borderRadius:8,boxShadow:"0 1px 3px rgba(0,0,0,.08)"}},e("thead",null,e("tr",null,["ID","System","Sev","Test","Expected","Status","Notes","By"].map(function(h){return e("th",{key:h},h);}))),e("tbody",null,p.tests.map(function(t,i){var r=p.results[t.id]||{};var st=r.status||"Untested";var sc=ST[st];return e("tr",{key:t.id,style:{background:i%2===0?"#fff":"#fafafa"}},e("td",{style:{fontFamily:"monospace",fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},t.id),e("td",null,e(SysB,{sys:t.sys})),e("td",null,e(SevB,{sev:t.sev})),e("td",{style:{fontWeight:700,fontSize:12,maxWidth:160}},t.name),e("td",{style:{fontSize:11,color:"#64748b",maxWidth:200}},t.expected),e("td",null,e("select",{value:st,onChange:function(x){p.onUpdate(t.id,"status",x.target.value);},style:{background:sc.bg,color:sc.color,border:"1px solid "+sc.border,borderRadius:5,padding:"3px 7px",fontSize:11,fontWeight:700,cursor:"pointer"}},["Untested","Pass","Fail","Blocked"].map(function(s){return e("option",{key:s},s);}))),e("td",null,e("input",{defaultValue:r.notes||"",onBlur:function(x){p.onUpdate(t.id,"notes",x.target.value);},placeholder:"Add note...",style:{border:"1px solid #e2e8f0",borderRadius:5,padding:"3px 7px",fontSize:11,width:"100%",minWidth:100}})),e("td",{style:{fontSize:10,color:"#94a3b8",whiteSpace:"nowrap"}},r.by||"-"));}))));}',
+    // ModalView
+    'function MV(p){var t=TESTS.find(function(x){return x.id===p.id;});var r=p.results[p.id]||{};var st=r.status||"Untested";var ns=R.useState(r.notes||"");var notes=ns[0];var sno=ns[1];var sv=R.useState(false);var saved=sv[0];var ssv=sv[1];function sn(){p.onUpdate(p.id,"notes",notes);ssv(true);setTimeout(function(){ssv(false);},1800);}return e("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:16},onClick:function(x){if(x.target===x.currentTarget)p.onClose();}},e("div",{style:{background:"#fff",borderRadius:12,padding:24,maxWidth:520,width:"100%",maxHeight:"90vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,.25)"}},e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14}},e("div",null,e("div",{style:{display:"flex",gap:6,marginBottom:6}},e(SysB,{sys:t.sys}),e(SevB,{sev:t.sev}),e("span",{style:{fontFamily:"monospace",fontSize:11,color:"#94a3b8"}},t.id)),e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},t.name)),e("button",{onClick:p.onClose,style:{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"#94a3b8"}},"\u00d7")),e("div",{style:{background:"#f0fdf4",borderRadius:8,padding:13,marginBottom:13,borderLeft:"4px solid #4ade80"}},e("div",{style:{fontSize:10,fontWeight:700,color:"#166534",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Expected Result"),e("div",{style:{fontSize:13,color:"#166534",lineHeight:1.55}},t.expected)),e("div",{style:{marginBottom:13}},e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:7}},"Result"),e("div",{style:{display:"flex",gap:7}},["Untested","Pass","Fail","Blocked"].map(function(s){var sc=ST[s];var act=st===s;return e("button",{key:s,onClick:function(){p.onUpdate(p.id,"status",s);},style:{flex:1,background:act?sc.bg:"#f8fafc",color:act?sc.color:"#94a3b8",border:"2px solid "+(act?sc.border:"#e2e8f0"),borderRadius:7,padding:"8px 4px",cursor:"pointer",fontSize:11,fontWeight:700}},s);}))),e("div",null,e("div",{style:{fontSize:11,fontWeight:700,color:"#64748b",textTransform:"uppercase",letterSpacing:1,marginBottom:5}},"Notes"),e("textarea",{value:notes,onChange:function(x){sno(x.target.value);},placeholder:"Describe what happened...",style:{width:"100%",border:"1px solid #e2e8f0",borderRadius:7,padding:9,fontSize:13,minHeight:75,resize:"vertical",color:"#1e293b",display:"block"}}),e("button",{onClick:sn,style:{marginTop:8,width:"100%",background:saved?"#16a34a":"#3b82f6",color:"#fff",border:"none",borderRadius:8,padding:10,cursor:"pointer",fontSize:13,fontWeight:700}},saved?"\u2713 Saved":"Save as "+p.tester)),r.by?e("div",{style:{fontSize:11,color:"#94a3b8",textAlign:"center",marginTop:8}},"Last updated by "+r.by+" \u00b7 "+r.at):null));}',
+    'D.createRoot(document.getElementById("r")).render(e(App,null));',
+    '})();',
+    '<\/script></body></html>'
+  ].join('\n');
+}
