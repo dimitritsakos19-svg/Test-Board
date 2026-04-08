@@ -516,12 +516,11 @@ function ModalView(p){
 function LeaderboardView(p){
   var userMap={};
   p.allTests.forEach(function(t){
-    var userResults=p.res[t.id]||{};
-    Object.values(userResults).forEach(function(r){
-      if(!r.user_name)return;
+    var ur=p.res[t.id]||{};
+    Object.values(ur).forEach(function(r){
+      if(!r.user_name||r.status==="Untested")return;
       if(!userMap[r.user_name])userMap[r.user_name]={name:r.user_name,total:0,pass:0,fail:0,blocked:0,future:0};
       var u=userMap[r.user_name];
-      if(r.status==="Untested")return;
       u.total++;
       if(r.status==="Pass")u.pass++;
       else if(r.status==="Fail")u.fail++;
@@ -530,67 +529,76 @@ function LeaderboardView(p){
     });
   });
   var users=Object.values(userMap).sort(function(a,b){return b.total-a.total;});
-  var totalTests=p.allTests.length;
+  var total=p.allTests.length;
   var medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
+  if(users.length===0){
+    return e("div",{style:{padding:20}},
+      e("div",{style:{fontWeight:800,fontSize:20,color:"#0f172a",marginBottom:8}},"\uD83C\uDFC6 Tester Leaderboard"),
+      e("div",{style:{textAlign:"center",padding:60,color:"#94a3b8",fontSize:14}},"No results yet. Start testing to appear on the leaderboard."));
+  }
   return e("div",{style:{padding:20}},
     e("div",{style:{fontWeight:800,fontSize:20,color:"#0f172a",marginBottom:4}},"\uD83C\uDFC6 Tester Leaderboard"),
-    e("div",{style:{fontSize:13,color:"#64748b",marginBottom:20}},"Live progress across all "+totalTests+" test cases"),
-    users.length===0
-      ?e("div",{style:{textAlign:"center",padding:60,color:"#94a3b8",fontSize:14}},"No results yet. Start testing to appear on the leaderboard.")
-      :e("div",null,
-        e("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:14,marginBottom:24}},
-          users.map(function(u,i){
-            var pct=totalTests?Math.round(u.total/totalTests*100):0;
-            var isMe=u.name===p.currentUser;
-            var passRate=u.total?Math.round(u.pass/u.total*100):0;
-            var passColor=passRate>=80?"#166534":passRate>=50?"#92400e":"#991b1b";
-            var passBg=passRate>=80?"#dcfce7":passRate>=50?"#fef3c7":"#fee2e2";
-            return e("div",{key:u.name,style:{background:"#fff",borderRadius:12,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,.08)",border:isMe?"2px solid #3b82f6":"2px solid transparent",position:"relative"}},
-              isMe?e("div",{style:{position:"absolute",top:10,right:10,background:"#3b82f6",color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}},"You"):null,
-              e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14}},
-                e("div",{style:{fontSize:28}},i<3?medals[i]:"\uD83D\uDD35"),
-                e("div",null,
-                  e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},u.name),
-                  e("div",{style:{fontSize:12,color:"#64748b"}},u.total+" / "+totalTests+" tested"))),
-              e("div",{style:{marginBottom:12}},
-                e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginBottom:4}},e("span","Coverage"),e("span",pct+"%")),
-                e("div",{style:{background:"#f1f5f9",borderRadius:99,height:8}},
-                  e("div",{style:{background:"#3b82f6",width:pct+"%",height:"100%",borderRadius:99,transition:"width .4s"}}))),
-              e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}},
-                e("span",{style:{fontSize:12,color:"#64748b"}},"Pass Rate"),
-                e("span",{style:{background:passBg,color:passColor,borderRadius:6,padding:"2px 10px",fontSize:12,fontWeight:700}},passRate+"%")),
-              e("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
-                [["Pass",u.pass,"#166534","#dcfce7"],["Fail",u.fail,"#991b1b","#fee2e2"],["Blocked",u.blocked,"#92400e","#fef3c7"],["Future",u.future,"#5b21b6","#ede9fe"]].map(function(it){
-                  if(!it[1])return null;
-                  return e("span",{key:it[0],style:{background:it[3],color:it[0]==="Pass"?"#166534":it[0]==="Fail"?"#991b1b":it[0]==="Blocked"?"#92400e":"#5b21b6",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}},it[1]+" "+it[0]);
-                })));
-          })),
-        e("div",{style:{background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,.08)"}},
-          e("div",{style:{padding:"14px 18px",borderBottom:"1px solid #f1f5f9",fontWeight:700,fontSize:13,color:"#0f172a"}},"Full Breakdown"),
-          e("div",{style:{overflowX:"auto"}},
-            e("table",{style:{width:"100%",borderCollapse:"collapse"}},
-              e("thead",null,e("tr",null,["#","Tester","Tested","Coverage","Pass","Fail","Blocked","Future","Pass Rate"].map(function(h){return e("th",{key:h},h);}))),
-              e("tbody",null,users.map(function(u,i){
-                var pct=totalTests?Math.round(u.total/totalTests*100):0;
-                var passRate=u.total?Math.round(u.pass/u.total*100):0;
-                var isMe=u.name===p.currentUser;
-                var prColor=passRate>=80?"#166534":passRate>=50?"#92400e":"#991b1b";
-                var prBg=passRate>=80?"#dcfce7":passRate>=50?"#fef3c7":"#fee2e2";
-                return e("tr",{key:u.name,style:{background:isMe?"#eff6ff":i%2===0?"#fff":"#fafafa"}},
-                  e("td",{style:{padding:"10px 14px",fontWeight:700,color:"#94a3b8"}},i<3?medals[i]:i+1),
-                  e("td",{style:{padding:"10px 14px",fontWeight:700,color:"#0f172a"}},u.name+(isMe?" \uD83D\uDC49 you":"")),
-                  e("td",{style:{padding:"10px 14px",fontWeight:700}},u.total),
-                  e("td",{style:{padding:"10px 14px",minWidth:120}},
-                    e("div",{style:{display:"flex",alignItems:"center",gap:8}},
-                      e("div",{style:{flex:1,background:"#f1f5f9",borderRadius:99,height:6}},
-                        e("div",{style:{background:"#3b82f6",width:pct+"%",height:"100%",borderRadius:99}})),
-                      e("span",{style:{fontSize:11,color:"#64748b",minWidth:30}},pct+"%"))),
-                  e("td",{style:{padding:"10px 14px",color:"#166534",fontWeight:700}},u.pass),
-                  e("td",{style:{padding:"10px 14px",color:"#991b1b",fontWeight:700}},u.fail),
-                  e("td",{style:{padding:"10px 14px",color:"#92400e",fontWeight:700}},u.blocked),
-                  e("td",{style:{padding:"10px 14px",color:"#5b21b6",fontWeight:700}},u.future),
-e("td",{style:{padding:"10px 14px"}},e("span",{style:{background:prBg,color:prColor,borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}},passRate+"%")));
-            }))))))));
+    e("div",{style:{fontSize:13,color:"#64748b",marginBottom:20}},"Live progress across all "+total+" test cases"),
+    e("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(220px,1fr))",gap:14,marginBottom:24}},
+      users.map(function(u,i){
+        var pct=total?Math.round(u.total/total*100):0;
+        var isMe=u.name===p.currentUser;
+        var pr=u.total?Math.round(u.pass/u.total*100):0;
+        var prC=pr>=80?"#166534":pr>=50?"#92400e":"#991b1b";
+        var prB=pr>=80?"#dcfce7":pr>=50?"#fef3c7":"#fee2e2";
+        return e("div",{key:u.name,style:{background:"#fff",borderRadius:12,padding:20,boxShadow:"0 1px 3px rgba(0,0,0,.08)",border:isMe?"2px solid #3b82f6":"2px solid transparent",position:"relative"}},
+          isMe?e("div",{style:{position:"absolute",top:10,right:10,background:"#3b82f6",color:"#fff",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}},"You"):null,
+          e("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:14}},
+            e("div",{style:{fontSize:28}},i<3?medals[i]:"\uD83D\uDD35"),
+            e("div",null,
+              e("div",{style:{fontWeight:800,fontSize:16,color:"#0f172a"}},u.name),
+              e("div",{style:{fontSize:12,color:"#64748b"}},u.total+" / "+total+" tested"))),
+          e("div",{style:{marginBottom:10}},
+            e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:11,color:"#94a3b8",marginBottom:4}},
+              e("span","Coverage"),e("span",pct+"%")),
+            e("div",{style:{background:"#f1f5f9",borderRadius:99,height:8}},
+              e("div",{style:{background:"#3b82f6",width:pct+"%",height:"100%",borderRadius:99}}))),
+          e("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}},
+            e("span",{style:{fontSize:12,color:"#64748b"}},"Pass Rate"),
+            e("span",{style:{background:prB,color:prC,borderRadius:6,padding:"2px 10px",fontSize:12,fontWeight:700}},pr+"%")),
+          e("div",{style:{display:"flex",gap:6,flexWrap:"wrap"}},
+            [["Pass",u.pass,"#166534","#dcfce7"],["Fail",u.fail,"#991b1b","#fee2e2"],["Blocked",u.blocked,"#92400e","#fef3c7"],["Future",u.future,"#5b21b6","#ede9fe"]].map(function(it){
+              if(!it[1])return null;
+              return e("span",{key:it[0],style:{background:it[3],color:it[1]>0?it[2]:"#64748b",borderRadius:20,padding:"2px 8px",fontSize:10,fontWeight:700}},it[1]+" "+it[0]);
+            })));
+      })),
+    e("div",{style:{background:"#fff",borderRadius:10,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,.08)"}},
+      e("div",{style:{padding:"14px 18px",borderBottom:"1px solid #f1f5f9",fontWeight:700,fontSize:13,color:"#0f172a"}},"Full Breakdown"),
+      e("div",{style:{overflowX:"auto"}},
+        e("table",{style:{width:"100%",borderCollapse:"collapse"}},
+          e("thead",null,
+            e("tr",null,
+              ["#","Tester","Tested","Coverage","Pass","Fail","Blocked","Future","Pass Rate"].map(function(h){
+                return e("th",{key:h},h);
+              }))),
+          e("tbody",null,
+            users.map(function(u,i){
+              var pct=total?Math.round(u.total/total*100):0;
+              var pr=u.total?Math.round(u.pass/u.total*100):0;
+              var isMe=u.name===p.currentUser;
+              var prC=pr>=80?"#166534":pr>=50?"#92400e":"#991b1b";
+              var prB=pr>=80?"#dcfce7":pr>=50?"#fef3c7":"#fee2e2";
+              return e("tr",{key:u.name,style:{background:isMe?"#eff6ff":i%2===0?"#fff":"#fafafa"}},
+                e("td",{style:{padding:"10px 14px",fontWeight:700,color:"#94a3b8"}},i<3?medals[i]:i+1),
+                e("td",{style:{padding:"10px 14px",fontWeight:700,color:"#0f172a"}},u.name+(isMe?" \uD83D\uDC49 you":"")),
+                e("td",{style:{padding:"10px 14px",fontWeight:700}},u.total),
+                e("td",{style:{padding:"10px 14px",minWidth:120}},
+                  e("div",{style:{display:"flex",alignItems:"center",gap:8}},
+                    e("div",{style:{flex:1,background:"#f1f5f9",borderRadius:99,height:6}},
+                      e("div",{style:{background:"#3b82f6",width:pct+"%",height:"100%",borderRadius:99}})),
+                    e("span",{style:{fontSize:11,color:"#64748b"}},pct+"%"))),
+                e("td",{style:{padding:"10px 14px",color:"#166534",fontWeight:700}},u.pass),
+                e("td",{style:{padding:"10px 14px",color:"#991b1b",fontWeight:700}},u.fail),
+                e("td",{style:{padding:"10px 14px",color:"#92400e",fontWeight:700}},u.blocked),
+                e("td",{style:{padding:"10px 14px",color:"#5b21b6",fontWeight:700}},u.future),
+                e("td",{style:{padding:"10px 14px"}},
+                  e("span",{style:{background:prB,color:prC,borderRadius:6,padding:"3px 10px",fontSize:12,fontWeight:700}},pr+"%")));
+            }))))));
 }
   
 function AddModal(p){
